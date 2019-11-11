@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-# todo skip free
-# todo show watch id
-
 import time
 import os
 import sys
@@ -21,6 +17,8 @@ import lxml.html
 import selenium
 import selenium.webdriver.firefox.options
 import selenium.webdriver
+
+mode="low"
 
 def str_abbreviate(str_in):
     len_str_in = len(str_in)
@@ -48,6 +46,8 @@ def valid_fn(fn):
     for key, value in character_replace.items():
         fn = fn.replace(key, value)
     return fn
+
+
 
 def nico_login(driver, mailtel, password):
     driver.get("https://account.nicovideo.jp/login")
@@ -97,6 +97,9 @@ jsapp.querySelector("div > div.ContextMenu-wrapper > div > div > div:nth-child(1
 return player_container.querySelector("div.InView.VideoContainer > div.SystemMessageContainer > div > div ").innerText;
 """)
 
+def get_duration(driver):
+    return driver.find_element_by_css_selector(".PlayerPlayTime-duration").text
+
 
 def init_driver():
     options = selenium.webdriver.firefox.options.Options()
@@ -107,19 +110,63 @@ def init_driver():
 
 
 ffmpeg_path = os.environ["FFMPEG"]
-def download_hls(url, outfn):
+info_pat = re.compile("\\[info\\]")
+frame_pat = re.compile("\\[info\\] frame")
+time_pat = re.compile("time=(.*?):(.*?):(.*?) ")
+# http_pat = re.compile("\\[http ")
+# hls_pat = re.compile("\\[hls ")
+
+def download_hls(url, outfn, duration_sec):
     tmpfn = "tmp.mkv"
     # todo: remove -t
-    subprocess.run([ffmpeg_path, "-hide_banner", "-i", url, "-t", "60", "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn], check=True)
+    # "-t", "60", 
+    # "-loglevel", "level+info", 
+    # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn], check=True)
+    # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", tmpfn], check=True)
+    proc = subprocess.Popen([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", tmpfn], stderr=subprocess.PIPE)
+
+    need_linebreak = False
+    while True:
+        line_raw = proc.stderr.readline()
+        if not line_raw:
+            break
+        line = line_raw.decode().rstrip("\r\n")
+        for l in line.split("\r"):
+            # sys.stderr.write("[info] %s\n"%repr(l))
+            if info_pat.search(l):
+                if info_pat.match(l):
+                    if frame_pat.match(l):
+                        time_match = time_pat.search(l)
+                        playtime_sec = (int(time_match.group(1))*60+int(time_match.group(2)))*60+float(time_match.group(3))
+                        sys.stderr.write("[ffmpeg %0.1f%%] %s\r"%((100*playtime_sec)/duration_sec, l))
+                        # todo: playtime / duration 
+                        
+                        need_linebreak = True
+                    else:
+                        if need_linebreak:
+                            sys.stderr.write("\n")
+                            need_linebreak = False
+                        sys.stderr.write("[ffmpeg] %s\n"%l)
+                else:
+                    continue
+            else:
+                if need_linebreak:
+                    sys.stderr.write("\n")
+                    need_linebreak = False
+                sys.stderr.write("[ffmpeg] %s\n"%l)
+    proc.wait()
+
+    time.sleep(5)
+    ## todo
     shutil.move(tmpfn, outfn)
 
-mode="best"
+
 res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
 def get_hls_url(driver, url):
 
-    sys.stderr.write("[info] opening a page\n")
+    sys.stderr.write("[info] opening page\n")
     driver.get(url)
 
     sys.stderr.write("[info] click_control\n")
@@ -189,8 +236,38 @@ def get_hls_url(driver, url):
     if mode=="low" and not "low" in format_id_video:
         raise Exception("low is not selected unexpectedly: %s" % format_match.group(0))
 
-    return {"url": url, "format_id_video": format_id_video, "format_id_audio": format_id_audio}
+    duration = get_duration(driver).split(":")
+    duration_sec = int(duration[0])*60 + int(duration[1])
 
+    return {"url": url, "format_id_video": format_id_video, "format_id_audio": format_id_audio, "duration": duration_sec}
+
+
+def wait_noneco():
+    datetime_now = datetime.datetime.now()
+    if datetime_now.hour in range(0, 3):
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=3)
+        sleep_duration = (wake_time - datetime_now).total_seconds()
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
+        time.sleep(sleep_duration)
+    elif (datetime_now.hour in range(18, 25) ) or (datetime_now.weekday() in [5,6] and datetime_now.hour in range(12, 18) ):
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=3)
+        wake_time += datetime.timedelta(days=1)
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
+        sleep_duration = (wake_time - datetime_now).total_seconds()
+        time.sleep(sleep_duration)
+
+def wait_eco():
+    datetime_now = datetime.datetime.now()
+    if (datetime_now.weekday() in range(0,5) and datetime_now.hour in range(3, 18) ):
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=18)
+        sleep_duration = (wake_time - datetime_now).total_seconds()
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
+        time.sleep(sleep_duration)
+    elif (datetime_now.weekday() in [5,6] and datetime_now.hour in range(3, 12) ):
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=12)
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
+        sleep_duration = (wake_time - datetime_now).total_seconds()
+        time.sleep(sleep_duration)
 
 def nicoch_get_page(sess, chname, pagenum):
     path = 'https://ch.nicovideo.jp/%s/video' % chname
@@ -274,7 +351,8 @@ def nicoch_get(chname):
             break
         page += 1
 
-def main():    
+def main():
+
     nico_user = os.environ["NICO_USER"]
     nico_password = os.environ["NICO_PASSWORD"]
     nico_channel = os.environ["NICO_CHANNEL"]
@@ -287,7 +365,14 @@ def main():
     sys.stderr.write("[info] nico_login\n")
     nico_login(driver, nico_user, nico_password)
 
+    # os.chdir(mode)
+    os.chdir("test")
     for link in nicoch_get(nico_channel):
+
+        if mode=="best":
+            wait_noneco()
+        if mode=="low":
+            wait_eco()
 
         url_match = url_pat.match(link["href"])
         watch_id = url_match.group(1)
@@ -308,7 +393,7 @@ def main():
         format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_video"].replace("_", "-")) 
 
         sys.stderr.write("[info] download_hls\n")
-        download_hls(hls_url["url"], "%s_%s_%s.mkv" % (watch_id, valid_fn(link["title"]), format_id))
+        download_hls(hls_url["url"], "%s_%s_%s.mkv" % (watch_id, valid_fn(link["title"]), format_id), hls_url["duration"])
         # todo error handling
 
     # driver.close()
