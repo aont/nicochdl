@@ -13,6 +13,7 @@ import time
 import youtube_dl
 import shutil
 import datetime
+import traceback
 
 def nicoch_get_page(sess, chname, pagenum):
     path = 'https://ch.nicovideo.jp/%s/video' % chname
@@ -205,7 +206,11 @@ def nico_download(ydl, link):
                 if ydl.params.get('format'):
                     ydl.params.update({"format": None})
                     del ydl.params['format']
-                    
+                
+                # todo
+                sys.stderr.write("[info] now=%s\n" % time.strftime("%Y/%m/%d %H:%M:%S")) 
+                
+
                 meta = ydl.extract_info(link['href'], download=False)
                 formats = meta.get('formats', [meta])
 
@@ -223,6 +228,7 @@ def nico_download(ydl, link):
                     formats_unpacked.append({ "format_id": format_id, "h264_res": h264_res, "aac_rate": aac_rate })
                     # for key, value in f.items():
                     #     sys.stderr.write("  %s: %s\n" % (key, value))
+                # sys.stderr.write("[info] formats=%s\n" % formats_unpacked)
 
                 selected_format_id = None
                 if mode=="best":
@@ -230,7 +236,7 @@ def nico_download(ydl, link):
                     selected_aac_rate = 0
                     for f in formats_unpacked:
                         format_id = f["format_id"]
-                        if "low" in selected_format_id:
+                        if "low" in format_id:
                             continue
                         # tbr = f.get("tbr")
                         # if tbr is None:
@@ -241,6 +247,7 @@ def nico_download(ydl, link):
                             selected_format_id = format_id
                             selected_h264_res = h264_res
                             selected_aac_rate = aac_rate
+
 
                 elif mode=="low":
                     selected_aac_rate = 0
@@ -304,7 +311,8 @@ def nico_download(ydl, link):
                     waiting_time *= 2
 
         except Exception as e:
-            sys.stderr.write("[Exception] %s\n"%(e))
+            tb = traceback.format_exc()
+            sys.stderr.write("%s\n%s\n"%(tb, e))
             # sys.stderr.write("[Exception]\n")
             sys.stderr.write("[Info] waiting for %s secs\n" % waiting_time)
             time.sleep(waiting_time)
