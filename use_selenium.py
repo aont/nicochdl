@@ -18,7 +18,7 @@ import selenium
 import selenium.webdriver.firefox.options
 import selenium.webdriver
 
-mode="low"
+mode=None
 
 def str_abbreviate(str_in):
     len_str_in = len(str_in)
@@ -113,20 +113,16 @@ ffmpeg_path = os.environ["FFMPEG"]
 info_pat = re.compile("\\[info\\]")
 frame_pat = re.compile("\\[info\\] frame")
 time_pat = re.compile("time=(.*?):(.*?):(.*?) ")
-speed_pat = re.compile("speed=(.*?)x")
+speed_pat = re.compile("speed=\\s*(.*?)x")
 size_pat = re.compile("size=\\s*(.*?)\\s")
+bitrate_pat = re.compile("bitrate=\\s*(.+?) ") 
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
 def download_hls(url, outfn, duration_sec):
-    # tmpfn = "tmp.mkv"
     tmpfn = "tmp.ts"
-    # todo: remove -t
-    # "-t", "60", 
-    # "-loglevel", "level+info", 
-    # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn], check=True)
-    # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", tmpfn], check=True)
-    proc = subprocess.Popen([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", tmpfn], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL)
+    ffmpeg_cmd = [ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", tmpfn]
+    proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
     need_linebreak = False
     
@@ -154,10 +150,14 @@ def download_hls(url, outfn, duration_sec):
                         size_match = size_pat.search(l)
                         size = size_match.group(1)
 
+                        bitrate_match = bitrate_pat.search(l)
+                        bitrate_str = bitrate_match.group(1)
+
                         remtime_sec = (duration_sec-playtime_sec)/speed
                         remtime_minsec = divmod(int(remtime_sec), 60)
 
-                        mes = "[ffmpeg] %0.1f%% time=%02d:%02.0f/%02d:%02d size=%s speed=%sx remtime=%02d:%02d"%((100*playtime_sec)/duration_sec, *playeime_minsec, *duration_minsec, size, speed, *remtime_minsec)
+                        mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playeime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
+
                         mes_len = len(mes)
 
                         pad_len = mes_len_prev - mes_len
@@ -183,7 +183,7 @@ def download_hls(url, outfn, duration_sec):
                 sys.stderr.write("[ffmpeg] %s\n"%l)
     proc.wait()
     if proc.returncode != 0:
-        raise Exception("ffmpeg exit with code %d (0x%X)" % (proc.returncode, proc.returncode))
+        raise Exception("ffmpeg exit with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
 
     time.sleep(5)
     # todo
@@ -193,6 +193,7 @@ def download_hls(url, outfn, duration_sec):
 res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
+sleep_time = 5
 def get_hls_url(driver, url):
 
     sys.stderr.write("[info] opening page\n")
@@ -202,15 +203,16 @@ def get_hls_url(driver, url):
     click_control(driver)
 
     sys.stderr.write("[info] sleep\n")
-    time.sleep(3)
+    time.sleep(sleep_time)
 
-    sys.stderr.write("[info] get_quality = %s\n" % get_quality(driver))
+    sys.stderr.write("[info] get_quality\n")
+    sys.stderr.write("[info] quality = %s\n" % get_quality(driver))
 
     sys.stderr.write("[info] quality_menu\n")
     quality_menu(driver)
 
     sys.stderr.write("[info] sleep\n")
-    time.sleep(3)
+    time.sleep(sleep_time)
 
     sys.stderr.write("[info] list_quality_items\n")
     quality_items = list(list_quality_items(driver))
@@ -246,13 +248,14 @@ def get_hls_url(driver, url):
     set_quality(driver, q_idx)
 
     sys.stderr.write("[info] sleep\n")
-    time.sleep(3)
+    time.sleep(sleep_time)
 
-    sys.stderr.write("[info] get_quality = %s\n" % get_quality(driver))
+    sys.stderr.write("[info] get_quality\n")
+    sys.stderr.write("[info] quality = %s\n" % get_quality(driver))
     
     sys.stderr.write("[info] system_message\n")
     sysmes = system_message(driver)
-    sys.stderr.write("[info] sysmes=%s\n" % str_abbreviate(repr(sysmes)))
+    sys.stderr.write("[info] sysmes = %s\n" % str_abbreviate(repr(sysmes)))
 
     sys.stderr.write("[info] url pattern match\n")
     url = list(sysmes_url_pat.finditer(sysmes))[-1].group(1)
@@ -316,7 +319,7 @@ def nicoch_get_page(sess, chname, pagenum):
             break
         except Exception as e:
             sys.stderr.write("[Exception] %s\n"%(e))
-            sys.stderr.write("[Info] waiting for %s secs\n" % waiting_time)
+            sys.stderr.write("[info] waiting for %s secs\n" % waiting_time)
             time.sleep(waiting_time)
             waiting_time *= 2
             # pass
@@ -383,6 +386,7 @@ def nicoch_get(chname):
 
 def main():
 
+    mode = "best"
     nico_user = os.environ["NICO_USER"]
     nico_password = os.environ["NICO_PASSWORD"]
     nico_channel = os.environ["NICO_CHANNEL"]
@@ -414,7 +418,7 @@ def main():
 
         glob_result = glob.glob("./%s_*_*.ts" % (watch_id))
         if glob_result:
-            sys.stderr.write("[Info] skipping %s since it is downloaded before\n" % watch_id)
+            sys.stderr.write("[info] skipping %s since it is downloaded before\n" % watch_id)
             continue
 
         sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
