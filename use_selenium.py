@@ -113,19 +113,25 @@ ffmpeg_path = os.environ["FFMPEG"]
 info_pat = re.compile("\\[info\\]")
 frame_pat = re.compile("\\[info\\] frame")
 time_pat = re.compile("time=(.*?):(.*?):(.*?) ")
+speed_pat = re.compile("speed=(.*?)x")
+size_pat = re.compile("size=\\s*(.*?)\\s")
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
 def download_hls(url, outfn, duration_sec):
-    tmpfn = "tmp.mkv"
+    # tmpfn = "tmp.mkv"
+    tmpfn = "tmp.ts"
     # todo: remove -t
     # "-t", "60", 
     # "-loglevel", "level+info", 
     # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn], check=True)
     # subprocess.run([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", tmpfn], check=True)
-    proc = subprocess.Popen([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", tmpfn], stderr=subprocess.PIPE)
+    proc = subprocess.Popen([ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-f", "mpegts", tmpfn], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL)
 
     need_linebreak = False
+    
+    duration_minsec = divmod(duration_sec, 60)
+    mes_len_prev = 0
     while True:
         line_raw = proc.stderr.readline()
         if not line_raw:
@@ -136,10 +142,31 @@ def download_hls(url, outfn, duration_sec):
             if info_pat.search(l):
                 if info_pat.match(l):
                     if frame_pat.match(l):
+                        # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
                         time_match = time_pat.search(l)
-                        playtime_sec = (int(time_match.group(1))*60+int(time_match.group(2)))*60+float(time_match.group(3))
-                        sys.stderr.write("[ffmpeg %0.1f%%] %s\r"%((100*playtime_sec)/duration_sec, l))
-                        # todo: playtime / duration 
+                        playeime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
+                        playtime_sec = playeime_minsec[0]*60+playeime_minsec[1]
+
+                        speed_match = speed_pat.search(l)
+                        speed_str = speed_match.group(1)
+                        speed = float(speed_str)
+
+                        size_match = size_pat.search(l)
+                        size = size_match.group(1)
+
+                        remtime_sec = (duration_sec-playtime_sec)/speed
+                        remtime_minsec = divmod(int(remtime_sec), 60)
+
+                        mes = "[ffmpeg] %0.1f%% time=%02d:%02.0f/%02d:%02d size=%s speed=%sx remtime=%02d:%02d"%((100*playtime_sec)/duration_sec, *playeime_minsec, *duration_minsec, size, speed, *remtime_minsec)
+                        mes_len = len(mes)
+
+                        pad_len = mes_len_prev - mes_len
+                        mes_len_prev = mes_len
+
+                        sys.stderr.write(mes)
+                        if pad_len > 0:
+                            sys.stderr.write(" "*pad_len)
+                        sys.stderr.write("\r")
                         
                         need_linebreak = True
                     else:
@@ -159,7 +186,7 @@ def download_hls(url, outfn, duration_sec):
         raise Exception("ffmpeg exit with code %d (0x%X)" % (proc.returncode, proc.returncode))
 
     time.sleep(5)
-    ## todo
+    # todo
     shutil.move(tmpfn, outfn)
 
 
@@ -238,10 +265,11 @@ def get_hls_url(driver, url):
     if mode=="low" and not "low" in format_id_video:
         raise Exception("low is not selected unexpectedly: %s" % format_match.group(0))
 
-    duration = get_duration(driver).split(":")
+    duration_str = get_duration(driver)
+    duration = duration_str.split(":")
     duration_sec = int(duration[0])*60 + int(duration[1])
 
-    return {"url": url, "format_id_video": format_id_video, "format_id_audio": format_id_audio, "duration": duration_sec}
+    return {"url": url, "format_id_video": format_id_video, "format_id_audio": format_id_audio, "duration_str": duration_str, "duration_sec": duration_sec}
 
 
 def wait_noneco():
@@ -367,7 +395,7 @@ def main():
     sys.stderr.write("[info] nico_login\n")
     nico_login(driver, nico_user, nico_password)
 
-    os.chdir(mode)
+    # os.chdir(mode)
     # os.chdir("test")
     for link in nicoch_get(nico_channel):
 
@@ -384,7 +412,7 @@ def main():
             sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
             continue
 
-        glob_result = glob.glob("./%s_*_*.mkv" % (watch_id))
+        glob_result = glob.glob("./%s_*_*.ts" % (watch_id))
         if glob_result:
             sys.stderr.write("[Info] skipping %s since it is downloaded before\n" % watch_id)
             continue
@@ -395,7 +423,7 @@ def main():
         format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_video"].replace("_", "-")) 
 
         sys.stderr.write("[info] download_hls\n")
-        download_hls(hls_url["url"], "%s_%s_%s.mkv" % (watch_id, valid_fn(link["title"]), format_id), hls_url["duration"])
+        download_hls(hls_url["url"], "%s_%s_%s.ts" % (watch_id, valid_fn(link["title"]), format_id), hls_url["duration_sec"])
         # todo error handling
 
     # driver.close()
