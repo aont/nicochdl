@@ -155,6 +155,8 @@ def download_hls(url, outfn, duration_sec):
                     need_linebreak = False
                 sys.stderr.write("[ffmpeg] %s\n"%l)
     proc.wait()
+    if proc.returncode != 0:
+        raise Exception("ffmpeg exit with code %d (0x%X)" % (proc.returncode, proc.returncode))
 
     time.sleep(5)
     ## todo
@@ -365,8 +367,8 @@ def main():
     sys.stderr.write("[info] nico_login\n")
     nico_login(driver, nico_user, nico_password)
 
-    # os.chdir(mode)
-    os.chdir("test")
+    os.chdir(mode)
+    # os.chdir("test")
     for link in nicoch_get(nico_channel):
 
         if mode=="best":
