@@ -36,7 +36,7 @@ def valid_fn(fn):
 
 def restore_cookie(driver, cookie_json_fn):
     if os.path.isfile(cookie_json_fn):
-        sys.stderr.write("[info] opening a page as a workaround for setting cookie\n")
+        # sys.stderr.write("[info] opening a page as a workaround for setting cookie\n")
         driver.get("https://account.nicovideo.jp/login")
         fp = open(cookie_json_fn, "r")
         cookies = json.load(fp)
@@ -469,7 +469,7 @@ def main():
                 exc_tb = traceback.format_exc()
                 sys.stderr.write("[Exception]\n")
                 sys.stderr.write(exc_tb)
-                trynum += 1
+                try_num += 1
                 if try_num < max_try:
                     sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
                     time.sleep(sleep_time)
