@@ -18,7 +18,6 @@ import selenium
 import selenium.webdriver.firefox.options
 import selenium.webdriver
 
-mode=None
 
 def str_abbreviate(str_in):
     len_str_in = len(str_in)
@@ -84,7 +83,10 @@ def set_quality(driver, index):
     elems[index].click()
 
 def get_quality(driver):
-    return driver.execute_script("return document.querySelector(\".VideoQualityMenuItem > div:nth-child(2) > div:nth-child(1) > a:nth-child(1) > span:nth-child(1)\").innerText")
+    quality = "-"
+    while quality == "-":
+        quality =  driver.execute_script("return document.querySelector(\".VideoQualityMenuItem > div:nth-child(2) > div:nth-child(1) > a:nth-child(1) > span:nth-child(1)\").innerText")
+    return quality
 
 def system_message(driver):
     return driver.execute_script("""
@@ -186,7 +188,6 @@ def download_hls(url, outfn, duration_sec):
         raise Exception("ffmpeg exit with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
 
     time.sleep(5)
-    # todo
     shutil.move(tmpfn, outfn)
 
 
@@ -194,7 +195,7 @@ res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
 sleep_time = 5
-def get_hls_url(driver, url):
+def get_hls_url(driver, url, mode):
 
     sys.stderr.write("[info] opening page\n")
     driver.get(url)
@@ -202,8 +203,8 @@ def get_hls_url(driver, url):
     sys.stderr.write("[info] click_control\n")
     click_control(driver)
 
-    sys.stderr.write("[info] sleep\n")
-    time.sleep(sleep_time)
+    # sys.stderr.write("[info] sleep\n")
+    # time.sleep(sleep_time)
 
     sys.stderr.write("[info] get_quality\n")
     sys.stderr.write("[info] quality = %s\n" % get_quality(driver))
@@ -211,12 +212,16 @@ def get_hls_url(driver, url):
     sys.stderr.write("[info] quality_menu\n")
     quality_menu(driver)
 
-    sys.stderr.write("[info] sleep\n")
-    time.sleep(sleep_time)
-
     sys.stderr.write("[info] list_quality_items\n")
     quality_items = list(list_quality_items(driver))
     sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
+
+    # sys.stderr.write("[info] sleep\n")
+    # time.sleep(sleep_time)
+
+    # sys.stderr.write("[info] list_quality_items\n")
+    # quality_items = list(list_quality_items(driver))
+    # sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
 
 
     if mode=="best":
@@ -238,6 +243,9 @@ def get_hls_url(driver, url):
             if "低画質" == quality_items[i]:
                 q_idx = i
                 break
+    
+    else:
+        raise Exception("unknown mode %s" % mode)
 
     if q_idx == -1:
         raise Exception("quality not selected")
@@ -247,8 +255,8 @@ def get_hls_url(driver, url):
     sys.stderr.write("[info] set_quality\n")
     set_quality(driver, q_idx)
 
-    sys.stderr.write("[info] sleep\n")
-    time.sleep(sleep_time)
+    # sys.stderr.write("[info] sleep\n")
+    # time.sleep(sleep_time)
 
     sys.stderr.write("[info] get_quality\n")
     sys.stderr.write("[info] quality = %s\n" % get_quality(driver))
@@ -422,7 +430,7 @@ def main():
             continue
 
         sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
-        hls_url = get_hls_url(driver, link["href"])
+        hls_url = get_hls_url(driver, link["href"], mode)
         sys.stderr.write("[info] hls_url=%s\n" % hls_url)
         format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_video"].replace("_", "-")) 
 
