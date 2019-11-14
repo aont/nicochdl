@@ -181,11 +181,10 @@ def download_hls(url, outfn, duration_sec):
                         
                         need_linebreak = True
                     else: # not progress info
-                        pass
-                        # if need_linebreak:
-                        #     sys.stderr.write("\n")
-                        #     need_linebreak = False
-                        # sys.stderr.write("[ffmpeg] %s\n"%l)
+                        if need_linebreak:
+                            sys.stderr.write("\n")
+                            need_linebreak = False
+                        sys.stderr.write("[ffmpeg] %s\n"%l)
                 else:
                     continue
             else:
@@ -193,6 +192,9 @@ def download_hls(url, outfn, duration_sec):
                     sys.stderr.write("\n")
                     need_linebreak = False
                 sys.stderr.write("[ffmpeg] %s\n"%l)
+    if need_linebreak:
+        sys.stderr.write("\n")
+        need_linebreak = False
     proc.wait()
     if proc.returncode != 0:
         raise Exception("ffmpeg exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
@@ -404,7 +406,7 @@ def nicoch_get(chname):
 
 def main():
     cookie_json_fn = "cookie.json"
-    mode = "low"
+    mode = "best"
     nico_user = os.environ["NICO_USER"]
     nico_password = os.environ["NICO_PASSWORD"]
     nico_channel = os.environ["NICO_CHANNEL"]
@@ -457,7 +459,7 @@ def main():
                 sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
                 hls_url = get_hls_url(driver, mode)
                 sys.stderr.write("[info] hls_url=%s\n" % hls_url)
-                format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_video"].replace("_", "-")) 
+                format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_audio"].replace("_", "-")) 
 
                 sys.stderr.write("[info] download_hls\n")
 
