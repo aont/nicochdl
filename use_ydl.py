@@ -135,13 +135,13 @@ def valid_fn(fn):
 
 def wait_noneco():
     datetime_now = datetime.datetime.now()
-    if datetime_now.hour in range(0, 3):
-        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=3)
+    if datetime_now.hour in range(0, 2):
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2)
         sleep_duration = (wake_time - datetime_now).total_seconds()
         sys.stderr.write("[info] sleep until %s\n" % wake_time)
         time.sleep(sleep_duration)
     elif (datetime_now.hour in range(18, 25) ) or (datetime_now.weekday() in [5,6] and datetime_now.hour in range(12, 18) ):
-        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=3)
+        wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2)
         wake_time += datetime.timedelta(days=1)
         sys.stderr.write("[info] sleep until %s\n" % wake_time)
         sleep_duration = (wake_time - datetime_now).total_seconds()
@@ -149,12 +149,12 @@ def wait_noneco():
 
 def wait_eco():
     datetime_now = datetime.datetime.now()
-    if (datetime_now.weekday() in range(0,5) and datetime_now.hour in range(3, 18) ):
+    if (datetime_now.weekday() in range(0,5) and datetime_now.hour in range(2, 18) ):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=18)
         sleep_duration = (wake_time - datetime_now).total_seconds()
         sys.stderr.write("[info] sleep until %s\n" % wake_time)
         time.sleep(sleep_duration)
-    elif (datetime_now.weekday() in [5,6] and datetime_now.hour in range(3, 12) ):
+    elif (datetime_now.weekday() in [5,6] and datetime_now.hour in range(2, 12) ):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=12)
         sys.stderr.write("[info] sleep until %s\n" % wake_time)
         sleep_duration = (wake_time - datetime_now).total_seconds()
