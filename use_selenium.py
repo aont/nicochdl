@@ -20,6 +20,11 @@ import selenium.webdriver.firefox.options
 import selenium.webdriver
 
 
+def get_screensize():
+    import ctypes
+    user32 = ctypes.windll.user32
+    screensize = (user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
+    return screensize
 
 def str_abbreviate(str_in):
     len_str_in = len(str_in)
@@ -37,19 +42,19 @@ def valid_fn(fn):
 def restore_cookie(driver, cookie_json_fn):
     if os.path.isfile(cookie_json_fn):
         # sys.stderr.write("[info] opening a page as a workaround for setting cookie\n")
-        driver.get("https://account.nicovideo.jp/login")
         fp = open(cookie_json_fn, "r")
         cookies = json.load(fp)
         fp.close()
+        driver.get("https://account.nicovideo.jp/login")
         for cookie in cookies:
             driver.add_cookie(cookie)
 
-def nico_login(driver, mailtel, password, cookie_json_fn):
+def nico_login(driver, mailtel, password):
 
-    # driver.get("https://account.nicovideo.jp/login")
+    driver.get("https://account.nicovideo.jp/login")
 
-    login_anchor = driver.find_element_by_css_selector("#siteHeaderNotification > a")
-    login_anchor.click()
+    # login_anchor = driver.find_element_by_css_selector("#siteHeaderNotification > a")
+    # login_anchor.click()
 
     mailtel_input = driver.find_element_by_id("input__mailtel")
     mailtel_input.send_keys(mailtel)
@@ -59,6 +64,7 @@ def nico_login(driver, mailtel, password, cookie_json_fn):
     login_button = driver.find_element_by_id("login__submit")
     login_button.click()
 
+def save_cookie(cookie_json_fn):
     sys.stderr.write("[info] saveing cookies\n")
     fp = open(cookie_json_fn, "w")
     json.dump(driver.get_cookies() , fp)
@@ -81,7 +87,7 @@ def quality_menu(driver):
 def list_quality_items(driver):
     elems = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div")
     for elem in elems:
-       yield elem.text
+        yield elem.text
 
 def set_quality(driver, index):
     elems = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div")
@@ -111,11 +117,19 @@ def system_message(driver):
 def get_duration(driver):
     return driver.find_element_by_css_selector(".PlayerPlayTime-duration").text
 
-
+# geckodriver_path = None
 def init_driver():
     options = selenium.webdriver.firefox.options.Options()
     options.headless = False
+    # executable_path=geckodriver_path,
     driver = selenium.webdriver.Firefox(options=options)
+    screensize = get_screensize()
+    winpos = (screensize[0] - 16, screensize[1] - 64)
+    sys.stderr.write("[info] position=(%s,%s)\n" % winpos)
+    driver.set_window_position(*winpos)
+    # time.sleep(10)
+    # sys.stderr.write("[info] %s\n" % driver.get_window_position())
+    # sys.exit()
     return driver
 
 
@@ -130,7 +144,7 @@ bitrate_pat = re.compile("bitrate=\\s*(.+?) ")
 # hls_pat = re.compile("\\[hls ")
 
 def download_hls(url, outfn, duration_sec):
-    tmpfn = "tmp.mp4"
+    tmpfn = "tmp_%s.mp4" % os.getpid()
     # "-f", "mpegts"
     ffmpeg_cmd = [ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn]
     proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
@@ -206,8 +220,8 @@ def download_hls(url, outfn, duration_sec):
 res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
-sleep_time = 5
 def get_hls_url(driver, mode):
+    sleep_time = 5
 
     sys.stderr.write("[info] click_control\n")
     click_control(driver)
@@ -231,7 +245,6 @@ def get_hls_url(driver, mode):
     # sys.stderr.write("[info] list_quality_items\n")
     # quality_items = list(list_quality_items(driver))
     # sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
-
 
     if mode=="best":
         selected_res = 0
@@ -305,6 +318,20 @@ def wait_noneco():
         sys.stderr.write("[info] sleep until %s\n" % wake_time)
         sleep_duration = (wake_time - datetime_now).total_seconds()
         time.sleep(sleep_duration)
+
+def check_noneco_time():
+    datetime_now = datetime.datetime.now()
+    if datetime_now.weekday() in range(0,5):
+        if datetime_now.hour in range(2, 18):
+            return False
+        else:
+            return True
+    else:
+        if datetime_now.hour in range(2, 12):
+            return False
+        else:
+            return True
+
 
 def wait_eco():
     datetime_now = datetime.datetime.now()
@@ -402,9 +429,10 @@ def nicoch_get(chname):
         page += 1
 
 
+
 def main():
-    cookie_json_fn = "cookie.json"
-    mode = "best"
+    
+    mode = sys.argv[1]
     nico_user = os.environ["NICO_USER"]
     nico_password = os.environ["NICO_PASSWORD"]
     nico_channel = os.environ["NICO_CHANNEL"]
@@ -414,20 +442,15 @@ def main():
     sys.stderr.write("[info] init_driver\n")
     driver = init_driver()
 
+    if mode not in ["best", "low"]:
+        raise Exception("unexpected mode %s" % mode)
 
+    outdir = "hls_"+mode
 
-    sys.stderr.write("[info] setting cookie\n")
-    restore_cookie(driver, cookie_json_fn)
+    sys.stderr.write("[info] nico_login\n")
+    nico_login(driver, nico_user, nico_password)
 
-    # os.chdir(mode)
-    # os.chdir("test")
     for link in nicoch_get(nico_channel):
-
-        if mode=="best":
-            wait_noneco()
-        if mode=="low":
-            pass
-            # wait_eco()
 
         url_match = url_pat.match(link["href"])
         watch_id = url_match.group(1)
@@ -437,46 +460,68 @@ def main():
             sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
             continue
 
-        glob_result = glob.glob("./%s_*_*.mp4" % (watch_id))
+        glob_result = glob.glob("%s/%s_*_*.mp4" % (outdir, watch_id))
         if glob_result:
             sys.stderr.write("[info] skipping %s since it is downloaded before\n" % watch_id)
             continue
 
-        max_try = 5
-        try_num = 0
         sleep_time = 60
         while True:
             try:
+
+                if mode=="best":
+                    wait_noneco()
+                if mode=="low":
+                    wait_eco()
+
                 sys.stderr.write("[info] opening %s\n" % watch_id)
                 driver.get(link["href"])
 
-                if check_need_login(driver):
+                if not check_login(driver):
                     sys.stderr.write("[info] nico_login\n")
-                    nico_login(driver, nico_user, nico_password, cookie_json_fn)
+                    nico_login(driver, nico_user, nico_password)
+                    sys.stderr.write("[info] opening %s\n" % watch_id)
+                    driver.get(link["href"])                
 
                 sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
                 hls_url = get_hls_url(driver, mode)
                 sys.stderr.write("[info] hls_url=%s\n" % hls_url)
                 format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_audio"].replace("_", "-")) 
 
-                sys.stderr.write("[info] download_hls\n")
+                if ".m3u8" not in hls_url["url"]:
+                    sys.stderr.write("[warn] skipping since this it not HLS\n")
+                    break
 
-                download_hls(hls_url["url"], "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id), hls_url["duration_sec"])
+                sys.stderr.write("[info] download_hls\n")
+                download_hls(hls_url["url"], os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id)), hls_url["duration_sec"])
                 break
+
             except KeyboardInterrupt as e:
                 raise e
             except Exception as e:
                 exc_tb = traceback.format_exc()
                 sys.stderr.write("[Exception]\n")
                 sys.stderr.write(exc_tb)
-                try_num += 1
-                if try_num < max_try:
-                    sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
-                    time.sleep(sleep_time)
-                    sleep_time *= 2
-                    continue
-                else:
-                    raise e
+
+                # driver.get("https://secure.nicovideo.jp/secure/logout")
+                # driver.delete_all_cookies()
+
+                sys.stderr.write("[info] quiting driver\n")
+                driver.close()
+                driver.quit()
+
+                sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
+                time.sleep(sleep_time)
+
+                sys.stderr.write("[info] init_driver\n")
+                driver = init_driver()
+
+                sys.stderr.write("[info] nico_login\n")
+                nico_login(driver, nico_user, nico_password)
+
+                sleep_time *= 2
+                continue
+
 
     # driver.close()
     # driver.quit()
