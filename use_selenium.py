@@ -439,16 +439,10 @@ def main():
 
     url_pat = re.compile('https://www.nicovideo.jp/watch/(.+)')
 
-    sys.stderr.write("[info] init_driver\n")
-    driver = init_driver()
-
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
 
     outdir = "hls_"+mode
-
-    sys.stderr.write("[info] nico_login\n")
-    nico_login(driver, nico_user, nico_password)
 
     for link in nicoch_get(nico_channel):
 
@@ -474,14 +468,20 @@ def main():
                 if mode=="low":
                     wait_eco()
 
+                sys.stderr.write("[info] init_driver\n")
+                driver = init_driver()
+
+                sys.stderr.write("[info] nico_login\n")
+                nico_login(driver, nico_user, nico_password)
+
                 sys.stderr.write("[info] opening %s\n" % watch_id)
                 driver.get(link["href"])
 
-                if not check_login(driver):
-                    sys.stderr.write("[info] nico_login\n")
-                    nico_login(driver, nico_user, nico_password)
-                    sys.stderr.write("[info] opening %s\n" % watch_id)
-                    driver.get(link["href"])                
+                # if not check_login(driver):
+                #     sys.stderr.write("[info] nico_login\n")
+                #     nico_login(driver, nico_user, nico_password)
+                #     sys.stderr.write("[info] opening %s\n" % watch_id)
+                #     driver.get(link["href"])                
 
                 sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
                 hls_url = get_hls_url(driver, mode)
@@ -494,6 +494,11 @@ def main():
 
                 sys.stderr.write("[info] download_hls\n")
                 download_hls(hls_url["url"], os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id)), hls_url["duration_sec"])
+
+                sys.stderr.write("[info] quiting driver\n")
+                driver.close()
+                driver.quit()
+
                 break
 
             except KeyboardInterrupt as e:
@@ -513,11 +518,11 @@ def main():
                 sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
                 time.sleep(sleep_time)
 
-                sys.stderr.write("[info] init_driver\n")
-                driver = init_driver()
+                # sys.stderr.write("[info] init_driver\n")
+                # driver = init_driver()
 
-                sys.stderr.write("[info] nico_login\n")
-                nico_login(driver, nico_user, nico_password)
+                # sys.stderr.write("[info] nico_login\n")
+                # nico_login(driver, nico_user, nico_password)
 
                 sleep_time *= 2
                 continue
