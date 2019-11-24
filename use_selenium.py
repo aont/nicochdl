@@ -143,10 +143,16 @@ bitrate_pat = re.compile("bitrate=\\s*(.+?) ")
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
-def download_hls(url, outfn, duration_sec):
+def download_hls(url, outfn, duration_sec, user_agent, http_referer):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     # "-f", "mpegts"
-    ffmpeg_cmd = [ffmpeg_path, "-y", "-hide_banner", "-loglevel", "level+info", "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn]
+    ffmpeg_cmd = [ ffmpeg_path,
+        "-user_agent", user_agent,
+        "-headers", 'Origin: https://www.nicovideo.jp\r\n',
+        "-headers", "Referer: %s\r\n" % http_referer,
+        "-y", "-hide_banner", "-loglevel", "level+info",
+        "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn
+    ]
     proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
     need_linebreak = False
@@ -165,8 +171,8 @@ def download_hls(url, outfn, duration_sec):
                     if frame_pat.match(l):
                         # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
                         time_match = time_pat.search(l)
-                        playeime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
-                        playtime_sec = playeime_minsec[0]*60+playeime_minsec[1]
+                        playtime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
+                        playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
 
                         speed_match = speed_pat.search(l)
                         speed_str = speed_match.group(1)
@@ -181,7 +187,7 @@ def download_hls(url, outfn, duration_sec):
                         remtime_sec = (duration_sec-playtime_sec)/speed
                         remtime_minsec = divmod(int(remtime_sec), 60)
 
-                        mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playeime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
+                        mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playtime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
 
                         mes_len = len(mes)
 
@@ -220,6 +226,7 @@ def download_hls(url, outfn, duration_sec):
 res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
+resrate_pat = re.compile("(\\d+)p \\| (.+?)M")
 def get_hls_url(driver, mode):
     sleep_time = 5
 
@@ -265,7 +272,16 @@ def get_hls_url(driver, mode):
             if "低画質" == quality_items[i]:
                 q_idx = i
                 break
-    
+        if q_idx == -1:
+            rate_min = 1e300
+            for i in range(len(quality_items)):
+                resrate_match = resrate_pat.match(quality_items[i])
+                if not resrate_match:
+                    continue
+                rate = float(resrate_match.group(2))
+                if rate < rate_min:
+                    rate_min = rate
+                    q_idx = i
     else:
         raise Exception("unknown mode %s" % mode)
 
@@ -295,8 +311,8 @@ def get_hls_url(driver, mode):
 
     if mode=="best" and "low" in format_id_video:
         raise Exception("low is selected unexpectedly: %s" % format_match.group(0))
-    if mode=="low" and not "low" in format_id_video:
-        raise Exception("low is not selected unexpectedly: %s" % format_match.group(0))
+    # if mode=="low" and not "low" in format_id_video:
+    #     raise Exception("low is not selected unexpectedly: %s" % format_match.group(0))
 
     duration_str = get_duration(driver)
     duration = duration_str.split(":")
@@ -419,7 +435,7 @@ def nicoch_get_page(sess, chname, pagenum):
 
 def nicoch_get(chname):
     sess = requests.session()
-    page = 1    
+    page = 1
     while True:
         links = list(nicoch_get_page(sess, chname, page))
         for link in links:
@@ -492,8 +508,10 @@ def main():
                     sys.stderr.write("[warn] skipping since this it not HLS\n")
                     break
 
+                user_agent = driver.execute_script("return navigator.userAgent;")
+                save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
                 sys.stderr.write("[info] download_hls\n")
-                download_hls(hls_url["url"], os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id)), hls_url["duration_sec"])
+                download_hls(hls_url["url"], save_path, hls_url["duration_sec"], user_agent, link["href"])
 
                 sys.stderr.write("[info] quiting driver\n")
                 driver.close()
