@@ -243,7 +243,7 @@ def get_hls_url(driver, mode):
     quality_menu(driver)
 
     sys.stderr.write("[info] list_quality_items\n")
-    quality_items = list(list_quality_items(driver))
+    quality_items = tuple(list_quality_items(driver))
     sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
 
     # sys.stderr.write("[info] sleep\n")
@@ -304,8 +304,11 @@ def get_hls_url(driver, mode):
     sys.stderr.write("[info] sysmes = %s\n" % str_abbreviate(repr(sysmes)))
 
     sys.stderr.write("[info] url pattern match\n")
-    url = list(sysmes_url_pat.finditer(sysmes))[-1].group(1)
-    format_match = list(sysmes_format_pat.finditer(sysmes))[-1]
+    url = tuple(sysmes_url_pat.finditer(sysmes))[-1].group(1)
+    format_match_ary = tuple(sysmes_format_pat.finditer(sysmes))
+    if len(format_match_ary) == 0:
+        return None
+    format_match = format_match_ary[-1]
     format_id_video = format_match.group(2)
     format_id_audio = format_match.group(3)
 
@@ -437,7 +440,7 @@ def nicoch_get(chname):
     sess = requests.session()
     page = 1
     while True:
-        links = list(nicoch_get_page(sess, chname, page))
+        links = tuple(nicoch_get_page(sess, chname, page))
         for link in links:
             yield link
         if len(links)<20:
@@ -493,20 +496,10 @@ def main():
                 sys.stderr.write("[info] opening %s\n" % watch_id)
                 driver.get(link["href"])
 
-                # if not check_login(driver):
-                #     sys.stderr.write("[info] nico_login\n")
-                #     nico_login(driver, nico_user, nico_password)
-                #     sys.stderr.write("[info] opening %s\n" % watch_id)
-                #     driver.get(link["href"])                
-
                 sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
                 hls_url = get_hls_url(driver, mode)
                 sys.stderr.write("[info] hls_url=%s\n" % hls_url)
                 format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_audio"].replace("_", "-")) 
-
-                if ".m3u8" not in hls_url["url"]:
-                    sys.stderr.write("[warn] skipping since this it not HLS\n")
-                    break
 
                 user_agent = driver.execute_script("return navigator.userAgent;")
                 save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
@@ -526,21 +519,12 @@ def main():
                 sys.stderr.write("[Exception]\n")
                 sys.stderr.write(exc_tb)
 
-                # driver.get("https://secure.nicovideo.jp/secure/logout")
-                # driver.delete_all_cookies()
-
                 sys.stderr.write("[info] quiting driver\n")
                 driver.close()
                 driver.quit()
 
                 sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
                 time.sleep(sleep_time)
-
-                # sys.stderr.write("[info] init_driver\n")
-                # driver = init_driver()
-
-                # sys.stderr.write("[info] nico_login\n")
-                # nico_login(driver, nico_user, nico_password)
 
                 sleep_time *= 2
                 continue
