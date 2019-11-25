@@ -117,21 +117,43 @@ def system_message(driver):
 def get_duration(driver):
     return driver.find_element_by_css_selector(".PlayerPlayTime-duration").text
 
-# geckodriver_path = None
+def get_nico_cookie_iter(cookies):
+    for cookie in cookies:
+        if cookie["domain"] == ".nicovideo.jp":
+            yield "%s=%s" % (cookie["name"], cookie["value"])
+
+def get_nico_cookie(cookies):
+    return "; ".join(tuple(get_nico_cookie_iter(cookies)))
+
 def init_driver():
     options = selenium.webdriver.firefox.options.Options()
     options.headless = False
-    # executable_path=geckodriver_path,
     driver = selenium.webdriver.Firefox(options=options)
     screensize = get_screensize()
     winpos = (screensize[0] - 16, screensize[1] - 64)
     sys.stderr.write("[info] position=(%s,%s)\n" % winpos)
     driver.set_window_position(*winpos)
-    # time.sleep(10)
-    # sys.stderr.write("[info] %s\n" % driver.get_window_position())
-    # sys.exit()
     return driver
 
+curl_path = os.environ["CURL"]
+def download_http(url, outfn, cookie, user_agent, http_referer):
+    tmpfn = "tmp_%s.mp4" % os.getpid()
+    curl_cmd = [ curl_path,
+        "-A", user_agent,
+        "-H", 'Origin: https://www.nicovideo.jp',
+        "-H", "Referer: %s" % http_referer,
+        "-H", "Cookie: %s" % cookie,
+        "--continue-at", "-",
+        url, "-o", tmpfn
+    ]
+
+    proc = subprocess.Popen(curl_cmd)
+    proc.wait()
+    if proc.returncode != 0:
+        raise Exception("curl exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, curl_cmd))
+
+    time.sleep(5)
+    shutil.move(tmpfn, outfn)
 
 ffmpeg_path = os.environ["FFMPEG"]
 info_pat = re.compile("\\[info\\]")
@@ -227,7 +249,7 @@ res_pat=re.compile("(\\d+)p")
 sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+?)）")
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
 resrate_pat = re.compile("(\\d+)p \\| (.+?)M")
-def get_hls_url(driver, mode):
+def get_download_url(driver, mode):
     sleep_time = 5
 
     sys.stderr.write("[info] click_control\n")
@@ -305,23 +327,27 @@ def get_hls_url(driver, mode):
 
     sys.stderr.write("[info] url pattern match\n")
     url = tuple(sysmes_url_pat.finditer(sysmes))[-1].group(1)
-    format_match_ary = tuple(sysmes_format_pat.finditer(sysmes))
-    if len(format_match_ary) == 0:
-        return None
-    format_match = format_match_ary[-1]
-    format_id_video = format_match.group(2)
-    format_id_audio = format_match.group(3)
+    is_hls = ".m3u8" in url
+
+    if is_hls:
+        format_match_ary = tuple(sysmes_format_pat.finditer(sysmes))
+        if len(format_match_ary) == 0:
+            raise Exception("unexpected")
+        format_match = format_match_ary[-1]
+        format_id_video = format_match.group(2)
+        format_id_audio = format_match.group(3)
+        format_id = ("%s-%s" % (format_id_video, format_id_audio)).replace("_", "-")
+    else:
+        format_id = quality_selected
 
     if mode=="best" and "low" in format_id_video:
         raise Exception("low is selected unexpectedly: %s" % format_match.group(0))
-    # if mode=="low" and not "low" in format_id_video:
-    #     raise Exception("low is not selected unexpectedly: %s" % format_match.group(0))
 
     duration_str = get_duration(driver)
     duration = duration_str.split(":")
     duration_sec = int(duration[0])*60 + int(duration[1])
 
-    return {"url": url, "format_id_video": format_id_video, "format_id_audio": format_id_audio, "duration_str": duration_str, "duration_sec": duration_sec}
+    return {"is_hls": is_hls, "url": url, "format_id": format_id, "duration": duration_sec}
 
 
 def wait_noneco():
@@ -379,6 +405,7 @@ def nicoch_get_page(sess, chname, pagenum):
             #  m: mylist
             #  n: comment ga atarasii
             #  l: saisei jikan
+            # order 'a'scending or 'd'escending
             break
         except Exception as e:
             sys.stderr.write("[Exception] %s\n"%(e))
@@ -469,6 +496,11 @@ def main():
         watch_id = url_match.group(1)
 
         purchase_type = link["purchase_type"]
+
+        # if purchase_type != "":
+        #     sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
+        #     continue
+
         if not link["purchase_type"] in ['free_for_member', 'member_unlimited_access']:
             sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
             continue
@@ -496,15 +528,21 @@ def main():
                 sys.stderr.write("[info] opening %s\n" % watch_id)
                 driver.get(link["href"])
 
-                sys.stderr.write("[info] get_hls_url %s\n" % watch_id)
-                hls_url = get_hls_url(driver, mode)
-                sys.stderr.write("[info] hls_url=%s\n" % hls_url)
-                format_id = "%s_%s" % (hls_url["format_id_video"].replace("_","-"), hls_url["format_id_audio"].replace("_", "-")) 
+                sys.stderr.write("[info] get_download_url %s\n" % watch_id)
+                url_info = get_download_url(driver, mode)
+                sys.stderr.write("[info] url=%s\n" % url_info)
+                format_id = url_info["format_id"]
 
                 user_agent = driver.execute_script("return navigator.userAgent;")
                 save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
-                sys.stderr.write("[info] download_hls\n")
-                download_hls(hls_url["url"], save_path, hls_url["duration_sec"], user_agent, link["href"])
+
+                if url_info["is_hls"]:
+                    sys.stderr.write("[info] download_hls\n")
+                    download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"])
+                else:
+                    cookie = get_nico_cookie(driver.get_cookies())
+                    sys.stderr.write("[info] download_http\n")
+                    download_http(url_info["url"], save_path, cookie,user_agent, link["href"])
 
                 sys.stderr.write("[info] quiting driver\n")
                 driver.close()
