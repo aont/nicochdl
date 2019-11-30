@@ -147,13 +147,19 @@ def download_http(url, outfn, cookie, user_agent, http_referer):
         url, "-o", tmpfn
     ]
 
-    proc = subprocess.Popen(curl_cmd)
-    proc.wait()
-    if proc.returncode != 0:
-        raise Exception("curl exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, curl_cmd))
+    while True:
+        proc = subprocess.Popen(curl_cmd)
+        proc.wait()
+        if proc.returncode == 18: # PARTIAL FILE
+            continue
+        elif proc.returncode != 0:
+            raise Exception("curl exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, curl_cmd))
+        else:
+            break
 
     time.sleep(5)
     shutil.move(tmpfn, outfn)
+
 
 ffmpeg_path = os.environ["FFMPEG"]
 info_pat = re.compile("\\[info\\]")
