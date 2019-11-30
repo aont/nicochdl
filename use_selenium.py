@@ -251,30 +251,31 @@ sysmes_format_pat = re.compile("動画視聴セッションの作成に成功し
 resrate_pat = re.compile("(\\d+)p \\| (.+?)M")
 def get_download_url(driver, mode):
     sleep_time = 5
-
+    
     sys.stderr.write("[info] click_control\n")
     click_control(driver)
-
+    
     # sys.stderr.write("[info] sleep\n")
     # time.sleep(sleep_time)
-
+    
     sys.stderr.write("[info] get_quality\n")
-    sys.stderr.write("[info] quality = %s\n" % get_quality(driver))
-
+    quality_before = get_quality(driver)
+    sys.stderr.write("[info] quality = %s\n" % quality_before)
+    
     sys.stderr.write("[info] quality_menu\n")
     quality_menu(driver)
-
+    
     sys.stderr.write("[info] list_quality_items\n")
     quality_items = tuple(list_quality_items(driver))
     sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
-
+    
     # sys.stderr.write("[info] sleep\n")
     # time.sleep(sleep_time)
-
+    
     # sys.stderr.write("[info] list_quality_items\n")
     # quality_items = list(list_quality_items(driver))
     # sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
-
+    
     if mode=="best":
         selected_res = 0
         q_idx = -1
@@ -287,7 +288,7 @@ def get_download_url(driver, mode):
                 if selected_res < res:
                     selected_res = res
                     q_idx = i
-
+    
     elif mode=="low":
         q_idx = -1
         for i in range(len(quality_items)):
@@ -306,29 +307,28 @@ def get_download_url(driver, mode):
                     q_idx = i
     else:
         raise Exception("unknown mode %s" % mode)
-
+    
     if q_idx == -1:
-        raise Exception("quality not selected")
-    quality_selected = quality_items[q_idx]
-    sys.stderr.write("[info] selected_quality = %s\n" % quality_selected)
-
-    sys.stderr.write("[info] set_quality\n")
-    set_quality(driver, q_idx)
-
-    # sys.stderr.write("[info] sleep\n")
-    # time.sleep(sleep_time)
-
-    sys.stderr.write("[info] get_quality to confirm\n")
-    sys.stderr.write("[info] quality = %s\n" % get_quality(driver, quality_selected))
+        quality_selected = quality_before
+        # pass
+    else:
+        quality_selected = quality_items[q_idx]
+        sys.stderr.write("[info] selected_quality = %s\n" % quality_selected)
+        
+        sys.stderr.write("[info] set_quality\n")
+        set_quality(driver, q_idx)
+        
+        sys.stderr.write("[info] get_quality to confirm\n")
+        sys.stderr.write("[info] quality = %s\n" % get_quality(driver, quality_selected))
     
     sys.stderr.write("[info] system_message\n")
     sysmes = system_message(driver)
     sys.stderr.write("[info] sysmes = %s\n" % str_abbreviate(repr(sysmes)))
-
-    sys.stderr.write("[info] url pattern match\n")
+    
+    # sys.stderr.write("[info] url pattern match\n")
     url = tuple(sysmes_url_pat.finditer(sysmes))[-1].group(1)
     is_hls = ".m3u8" in url
-
+    
     if is_hls:
         format_match_ary = tuple(sysmes_format_pat.finditer(sysmes))
         if len(format_match_ary) == 0:
@@ -339,14 +339,14 @@ def get_download_url(driver, mode):
         format_id = ("%s-%s" % (format_id_video, format_id_audio)).replace("_", "-")
     else:
         format_id = quality_selected
-
-    if mode=="best" and "low" in format_id_video:
+    
+    if mode=="best" and "low" in format_id:
         raise Exception("low is selected unexpectedly: %s" % format_match.group(0))
-
+    
     duration_str = get_duration(driver)
     duration = duration_str.split(":")
     duration_sec = int(duration[0])*60 + int(duration[1])
-
+    
     return {"is_hls": is_hls, "url": url, "format_id": format_id, "duration": duration_sec}
 
 
@@ -433,7 +433,7 @@ def nicoch_get_page(sess, chname, pagenum):
         if len(title_ary)!=1:
             # print len(title_ary)
             raise Exception("unexpected")
-
+        
         # print lxml.html.tostring(title_ary[0])
         anchor_ary = title_ary[0].findall('./a')
         if len(anchor_ary)!=1:
@@ -458,10 +458,8 @@ def nicoch_get_page(sess, chname, pagenum):
                 purchase_type = 'some_purchase_type'
         else:
             pass
-
+        
         yield {'href': href, 'title': title, 'purchase_type': purchase_type}
-
-    
 
 def nicoch_get(chname):
     sess = requests.session()
@@ -473,8 +471,6 @@ def nicoch_get(chname):
         if len(links)<20:
             break
         page += 1
-
-
 
 def main():
     
