@@ -111,7 +111,14 @@ def get_quality(driver, expected_quality = None):
 def system_message(driver):
     canvas = driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.InView.VideoContainer > div.VideoSymbolContainer > canvas")
     driver.execute_script("var ev = document.createEvent('HTMLEvents'); ev.initEvent('contextmenu', true, false); arguments[0].dispatchEvent(ev);", canvas)
-    driver.find_element_by_css_selector("#js-app > div > div.ContextMenu-wrapper > div > div > div:nth-child(1) > div:nth-child(3)").click()
+
+    for menu_item in driver.find_elements_by_css_selector("#js-app > div > div.ContextMenu-wrapper > div > div > div:nth-child(1) > div"):
+        if menu_item.text == "システムメッセージを開く":
+            menu_item.click()
+            break
+    else:
+        raise Exception("could not find menu item open-system-message")
+
     return driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.InView.VideoContainer > div.SystemMessageContainer > div > div").text
 
 def get_duration(driver):
@@ -150,12 +157,12 @@ def download_http(url, outfn, cookie, user_agent, http_referer):
     while True:
         proc = subprocess.Popen(curl_cmd)
         proc.wait()
+        if proc.returncode == 0: # OK
+            break
         if proc.returncode == 18: # PARTIAL FILE
             continue
-        elif proc.returncode != 0:
-            raise Exception("curl exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, curl_cmd))
         else:
-            break
+            raise Exception("curl exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, curl_cmd))
 
     time.sleep(5)
     shutil.move(tmpfn, outfn)
