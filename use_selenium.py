@@ -178,7 +178,7 @@ bitrate_pat = re.compile("bitrate=\\s*(.+?) ")
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
-def download_hls(url, outfn, duration_sec, user_agent, http_referer):
+def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     # "-f", "mpegts"
     ffmpeg_cmd = [ ffmpeg_path,
@@ -186,7 +186,10 @@ def download_hls(url, outfn, duration_sec, user_agent, http_referer):
         "-headers", 'Origin: https://www.nicovideo.jp\r\n',
         "-headers", "Referer: %s\r\n" % http_referer,
         "-y", "-hide_banner", "-loglevel", "level+info",
-        "-i", url, "-c:v", "copy", "-c:a", "copy", "-movflags", "faststart", "-bsf:a", "aac_adtstoasc", tmpfn
+        "-i", url, "-c:v", "copy", "-c:a", "copy",
+        "-movflags", "faststart", "-bsf:a", "aac_adtstoasc",
+        "-metadata", "creation_time=%s:00" % upload_date,
+        tmpfn
     ]
     proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
@@ -404,6 +407,7 @@ def wait_eco():
         sleep_duration = (wake_time - datetime_now).total_seconds()
         time.sleep(sleep_duration)
 
+url_pat = re.compile('https://www.nicovideo.jp/watch/(.+)')
 def nicoch_get_page(sess, chname, pagenum):
     path = 'https://ch.nicovideo.jp/%s/video' % chname
     # links = []
@@ -472,7 +476,19 @@ def nicoch_get_page(sess, chname, pagenum):
         else:
             pass
         
-        yield {'href': href, 'title': title, 'purchase_type': purchase_type}
+        url_match = url_pat.match(href)
+        watch_id = url_match.group(1)
+
+        duration_str = item.find_class("badge br length")[0].text
+        duration = duration_str
+        # duration_split = duration_str.split(":")
+        # duration = int(duration_split[0])*60 + int(duration_split[1])
+        view_count = item.find_class("view")[0].findall('./var')[0].text
+        comment_count = item.find_class("comment")[0].findall('./var')[0].text
+        mylist_count = item.find_class("mylist")[0].findall('./a/var')[0].text
+        upload_date = item.find_class("time")[0].findall('./time/var')[0].text.strip()
+
+        yield {'href': href, 'watch_id': watch_id, 'title': title, 'purchase_type': purchase_type, 'duration': duration, 'view': view_count, 'comment': comment_count, 'mylist': mylist_count, 'upload_date': upload_date}
 
 def nicoch_get(chname):
     sess = requests.session()
@@ -492,8 +508,6 @@ def main():
     nico_password = os.environ["NICO_PASSWORD"]
     nico_channel = os.environ["NICO_CHANNEL"]
 
-    url_pat = re.compile('https://www.nicovideo.jp/watch/(.+)')
-
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
 
@@ -501,8 +515,7 @@ def main():
 
     for link in nicoch_get(nico_channel):
 
-        url_match = url_pat.match(link["href"])
-        watch_id = url_match.group(1)
+        watch_id = link["watch_id"]
 
         purchase_type = link["purchase_type"]
 
@@ -547,7 +560,7 @@ def main():
 
                 if url_info["is_hls"]:
                     sys.stderr.write("[info] download_hls\n")
-                    download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"])
+                    download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"], link["upload_date"])
                 else:
                     cookie = get_nico_cookie(driver.get_cookies())
                     sys.stderr.write("[info] download_http\n")
