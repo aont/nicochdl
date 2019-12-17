@@ -511,7 +511,7 @@ def main():
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
 
-    outdir = "hls_"+mode
+    outdir = mode
 
     for link in nicoch_get(nico_channel):
 
