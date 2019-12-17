@@ -155,7 +155,7 @@ def nicoch_get(chname):
 def main():
 
     outdir = "custom"
-    nico_channel = "mentalist"
+    nico_channel = os.environ["NICO_CHANNEL"]
 
     for link in nicoch_get(nico_channel):
 
