@@ -77,24 +77,36 @@ def check_login(driver):
     siteHeaderNotification = driver.find_element_by_id("siteHeaderNotification")
     return (siteHeaderNotification.text != "ログイン")
 
+def pause_video(driver):
+    # pause_button = driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.ControllerBoxContainer > div.ControllerContainer > div > div:nth-child(1) > button.ActionButton.ControllerButton.PlayerPauseButton")
+    pause_button_ary = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.ControllerBoxContainer > div.ControllerContainer > div > div:nth-child(1) > button.ActionButton.ControllerButton.PlayerPauseButton")
+    if len(pause_button_ary)==1:
+        pause_button = pause_button_ary[0]
+        pause_button.click()
+    elif len(pause_button_ary)>1:
+        raise Exception("Too many pause buttons found")
 
 def click_control(driver):
     driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.ControllerBoxContainer > div.ControllerContainer > div > div:nth-child(3) > button.ActionButton.ControllerButton.PlayerOptionButton > div").click()
 
 def quality_menu(driver):
-    driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > a > span.PlayerOptionDropdown-toggleLabel").click()
+    driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.VideoOverlayContainer > div > div.PlayerOptionContainer-wrapper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > a > span.PlayerOptionDropdown-toggleArrow").click()
 
+quality_item_css_selector = "#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.VideoOverlayContainer > div > div.PlayerOptionContainer-wrapper > div > div > div > div > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div.PlayerOptionDropdownItem > div"
 def list_quality_items(driver):
-    elems = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div")
+    elems = driver.find_elements_by_css_selector(quality_item_css_selector)
+    # return elems
+    # elems = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div")
     for elem in elems:
         yield elem.text
 
 def set_quality(driver, index):
-    elems = driver.find_elements_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div")
+    elems = driver.find_elements_by_css_selector(quality_item_css_selector)
+    # "#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.WheelStopper > div > div > div > div:nth-child(1) > div.PlayerOptionMenuItem.VideoQualityMenuItem > div.PlayerOptionMenuItem-content > div > div > div"
     elems[index].click()
 
 def get_quality(driver, expected_quality = None):
-    while True:
+    for t in range(10):
         quality_elem = driver.find_element_by_css_selector(".VideoQualityMenuItem > div:nth-child(2) > div:nth-child(1) > a:nth-child(1) > span:nth-child(1)")
         if not quality_elem:
             sys.stderr.write("[info] quality_elem is None. retrying\n")
@@ -107,6 +119,8 @@ def get_quality(driver, expected_quality = None):
             continue
         else:
             return quality
+    else:
+        raise Exception("get_quality failed")
 
 def system_message(driver):
     canvas = driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.InView.VideoContainer > div.VideoSymbolContainer > canvas")
@@ -123,6 +137,25 @@ def system_message(driver):
 
 def get_duration(driver):
     return driver.find_element_by_css_selector(".PlayerPlayTime-duration").text
+
+def get_description(driver):
+    expand_button_ary = driver.find_elements_by_css_selector(".VideoDescriptionExpander-switchExpand")
+    if len(expand_button_ary)==1:
+        expand_button = expand_button_ary[0]
+        expand_button.click()
+    elif len(expand_button_ary)>1:
+        raise Exception("Too many expand buttons")
+    
+    description_elems = driver.find_elements_by_css_selector(".VideoDescription-html")
+    if len(description_elems)==0:
+        return ""
+    elif len(description_elems)==1:
+        description_elem = description_elems[0]
+        description_text = description_elem.text
+        return description_text
+    else:
+        raise Exception("Too many description elements")
+
 
 def get_nico_cookie_iter(cookies):
     for cookie in cookies:
@@ -142,7 +175,7 @@ def init_driver():
     driver.set_window_position(*winpos)
     return driver
 
-curl_path = os.environ["CURL"]
+curl_path = "curl.exe" # os.environ["CURL"]
 def download_http(url, outfn, cookie, user_agent, http_referer):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     curl_cmd = [ curl_path,
@@ -168,17 +201,17 @@ def download_http(url, outfn, cookie, user_agent, http_referer):
     shutil.move(tmpfn, outfn)
 
 
-ffmpeg_path = os.environ["FFMPEG"]
-info_pat = re.compile("\\[info\\]")
-frame_pat = re.compile("\\[info\\] frame")
-time_pat = re.compile("time=(.*?):(.*?):(.*?) ")
-speed_pat = re.compile("speed=\\s*(.*?)x")
-size_pat = re.compile("size=\\s*(.*?)\\s")
-bitrate_pat = re.compile("bitrate=\\s*(.+?) ") 
+ffmpeg_path = "ffmpeg.exe" # os.environ["FFMPEG"]
+info_pat = re.compile(b"\\[info\\]")
+frame_pat = re.compile(b"\\[info\\] frame")
+time_pat = re.compile(b"time=(.*?):(.*?):(.*?) ")
+speed_pat = re.compile(b"speed=\\s*(.*?)x")
+size_pat = re.compile(b"size=\\s*(.*?)\\s")
+bitrate_pat = re.compile(b"bitrate=\\s*(.+?) ") 
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
-def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date):
+def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date, description):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     # "-f", "mpegts"
     ffmpeg_cmd = [ ffmpeg_path,
@@ -189,73 +222,86 @@ def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date
         "-i", url, "-c:v", "copy", "-c:a", "copy",
         "-movflags", "faststart", "-bsf:a", "aac_adtstoasc",
         "-metadata", "creation_time=%s:00" % upload_date,
+        "-metadata", "comment=%s" % description,
         tmpfn
     ]
-    proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
-
-    need_linebreak = False
-    
-    duration_minsec = divmod(duration_sec, 60)
-    mes_len_prev = 0
+    count = 0
     while True:
-        line_raw = proc.stderr.readline()
-        if not line_raw:
-            break
-        line = line_raw.decode().rstrip("\r\n")
-        for l in line.split("\r"):
-            # sys.stderr.write("[info] %s\n"%repr(l))
-            if info_pat.search(l):
-                if info_pat.match(l):
-                    if frame_pat.match(l):
-                        # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
-                        time_match = time_pat.search(l)
-                        playtime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
-                        playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
+        proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
-                        speed_match = speed_pat.search(l)
-                        speed_str = speed_match.group(1)
-                        speed = float(speed_str)
-
-                        size_match = size_pat.search(l)
-                        size = size_match.group(1)
-
-                        bitrate_match = bitrate_pat.search(l)
-                        bitrate_str = bitrate_match.group(1)
-
-                        remtime_sec = (duration_sec-playtime_sec)/speed
-                        remtime_minsec = divmod(int(remtime_sec), 60)
-
-                        mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playtime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
-
-                        mes_len = len(mes)
-
-                        pad_len = mes_len_prev - mes_len
-                        mes_len_prev = mes_len
-
-                        sys.stderr.write(mes)
-                        if pad_len > 0:
-                            sys.stderr.write(" "*pad_len)
-                        sys.stderr.write("\r")
-                        
-                        need_linebreak = True
-                    else: # not progress info
-                        if need_linebreak:
-                            sys.stderr.write("\n")
-                            need_linebreak = False
-                        sys.stderr.write("[ffmpeg] %s\n"%l)
-                else:
-                    continue
-            else:
-                if need_linebreak:
-                    sys.stderr.write("\n")
-                    need_linebreak = False
-                sys.stderr.write("[ffmpeg] %s\n"%l)
-    if need_linebreak:
-        sys.stderr.write("\n")
         need_linebreak = False
-    proc.wait()
-    if proc.returncode != 0:
-        raise Exception("ffmpeg exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
+        
+        duration_minsec = divmod(duration_sec, 60)
+        # mes_len_prev = 0
+        while True:
+            line = proc.stderr.readline()
+            if not line:
+                break
+            # line = line_raw.decode().rstrip("\r\n")
+            line = line.rstrip(b"\r\n")
+            for l in line.split(b"\r"):
+                # sys.stderr.write("[info] %s\n"%repr(l))
+                if info_pat.search(l):
+                    if info_pat.match(l):
+                        if frame_pat.match(l):
+                            # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
+                            time_match = time_pat.search(l)
+                            playtime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
+                            playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
+
+                            speed_match = speed_pat.search(l)
+                            speed_str = speed_match.group(1).decode()
+                            speed = float(speed_str)
+                            if speed == 0:
+                                speed = 1e-5
+
+                            size_match = size_pat.search(l)
+                            size = size_match.group(1).decode()
+
+                            bitrate_match = bitrate_pat.search(l)
+                            bitrate_str = bitrate_match.group(1).decode()
+
+                            remtime_sec = (duration_sec-playtime_sec)/speed
+                            remtime_minsec = divmod(int(remtime_sec), 60)
+
+                            mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playtime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
+
+                            # mes_len = len(mes)
+
+                            # pad_len = mes_len_prev - mes_len
+                            # mes_len_prev = mes_len
+
+                            sys.stderr.write(mes + "\033[0K\r")
+                            # if pad_len > 0:
+                            #     sys.stderr.write(" "*pad_len)
+                            # sys.stderr.write("\r")
+                            
+                            need_linebreak = True
+                        else: # not progress info
+                            if need_linebreak:
+                                sys.stderr.write("\n")
+                                need_linebreak = False
+                            sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
+                    else:
+                        continue
+                else:
+                    if need_linebreak:
+                        sys.stderr.write("\n")
+                        need_linebreak = False
+                    sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
+        if need_linebreak:
+            sys.stderr.write("\n")
+            need_linebreak = False
+        proc.wait()
+        if proc.returncode != 0:
+            if count < 3:
+                sys.stderr.write("\n[warn] ffmpeg exited with code %d (0x%X). retrying\n" % (proc.returncode, proc.returncode))
+                time.sleep(10)
+                count += 1
+                continue
+            else:
+                raise Exception("ffmpeg exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
+        break
 
     time.sleep(5)
     shutil.move(tmpfn, outfn)
@@ -266,8 +312,15 @@ sysmes_url_pat = re.compile("動画の読み込みを開始しました。（(.+
 sysmes_format_pat = re.compile("動画視聴セッションの作成に成功しました。（(.*?), archive_(.*?), archive_(.*?)）")
 resrate_pat = re.compile("(\\d+)p \\| (.+?)M")
 def get_download_url(driver, mode):
+
+    # pause_video(driver)
+
     sleep_time = 5
-    
+
+    sys.stderr.write("[info] get_description\n")
+    description_text = get_description(driver)
+    sys.stderr.write("[info] description_text=%s\n" % str_abbreviate(repr(description_text)))
+
     sys.stderr.write("[info] click_control\n")
     click_control(driver)
     
@@ -284,7 +337,7 @@ def get_download_url(driver, mode):
     sys.stderr.write("[info] list_quality_items\n")
     quality_items = tuple(list_quality_items(driver))
     sys.stderr.write("[info] quality=%s\n" % ",".join(quality_items))
-    
+
     # sys.stderr.write("[info] sleep\n")
     # time.sleep(sleep_time)
     
@@ -336,6 +389,7 @@ def get_download_url(driver, mode):
         
         sys.stderr.write("[info] get_quality to confirm\n")
         sys.stderr.write("[info] quality = %s\n" % get_quality(driver, quality_selected))
+
     
     sys.stderr.write("[info] system_message\n")
     sysmes = system_message(driver)
@@ -362,49 +416,49 @@ def get_download_url(driver, mode):
     duration_str = get_duration(driver)
     duration = duration_str.split(":")
     duration_sec = int(duration[0])*60 + int(duration[1])
+
+    # pause_video(driver)
     
-    return {"is_hls": is_hls, "url": url, "format_id": format_id, "duration": duration_sec}
+    return {"is_hls": is_hls, "url": url, "format_id": format_id, "duration": duration_sec, "description": description_text}
 
 
-def wait_noneco():
+def sleep_duration_noneco():
     datetime_now = datetime.datetime.now()
     if datetime_now.hour in range(0, 2):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2)
         sleep_duration = (wake_time - datetime_now).total_seconds()
-        sys.stderr.write("[info] sleep until %s\n" % wake_time)
-        time.sleep(sleep_duration)
+        return (sleep_duration, wake_time)
     elif (datetime_now.hour in range(18, 25) ) or (datetime_now.weekday() in [5,6] and datetime_now.hour in range(12, 18) ):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2)
         wake_time += datetime.timedelta(days=1)
-        sys.stderr.write("[info] sleep until %s\n" % wake_time)
         sleep_duration = (wake_time - datetime_now).total_seconds()
-        time.sleep(sleep_duration)
-
-def check_noneco_time():
-    datetime_now = datetime.datetime.now()
-    if datetime_now.weekday() in range(0,5):
-        if datetime_now.hour in range(2, 18):
-            return False
-        else:
-            return True
+        return (sleep_duration, wake_time)
     else:
-        if datetime_now.hour in range(2, 12):
-            return False
-        else:
-            return True
+        return (0, datetime_now)
 
-
-def wait_eco():
+def sleep_duration_eco():
     datetime_now = datetime.datetime.now()
     if (datetime_now.weekday() in range(0,5) and datetime_now.hour in range(2, 18) ):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=18)
         sleep_duration = (wake_time - datetime_now).total_seconds()
-        sys.stderr.write("[info] sleep until %s\n" % wake_time)
-        time.sleep(sleep_duration)
+        return (sleep_duration, wake_time)
     elif (datetime_now.weekday() in [5,6] and datetime_now.hour in range(2, 12) ):
         wake_time = datetime.datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=12)
-        sys.stderr.write("[info] sleep until %s\n" % wake_time)
         sleep_duration = (wake_time - datetime_now).total_seconds()
+        return (sleep_duration, wake_time)
+    else:
+        return (0, datetime_now)
+
+def wait_noneco():
+    sleep_duration, wake_time = sleep_duration_noneco()
+    if sleep_duration > 0:
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
+        time.sleep(sleep_duration)
+
+def wait_eco():
+    sleep_duration, wake_time = sleep_duration_eco()
+    if sleep_duration > 0:
+        sys.stderr.write("[info] sleep until %s\n" % wake_time)
         time.sleep(sleep_duration)
 
 url_pat = re.compile('https://www.nicovideo.jp/watch/(.+)')
@@ -485,7 +539,7 @@ def nicoch_get_page(sess, chname, pagenum):
         # duration = int(duration_split[0])*60 + int(duration_split[1])
         view_count = item.find_class("view")[0].findall('./var')[0].text
         comment_count = item.find_class("comment")[0].findall('./var')[0].text
-        mylist_count = item.find_class("mylist")[0].findall('./a/var')[0].text
+        mylist_count = item.find_class("mylist")[0].findall('.//var')[0].text
         upload_date = item.find_class("time")[0].findall('./time/var')[0].text.strip()
 
         yield {'href': href, 'watch_id': watch_id, 'title': title, 'purchase_type': purchase_type, 'duration': duration, 'view': view_count, 'comment': comment_count, 'mylist': mylist_count, 'upload_date': upload_date}
@@ -502,11 +556,11 @@ def nicoch_get(chname):
         page += 1
 
 def main():
-    
-    mode = sys.argv[1]
-    nico_user = os.environ["NICO_USER"]
-    nico_password = os.environ["NICO_PASSWORD"]
-    nico_channel = os.environ["NICO_CHANNEL"]
+
+    nico_user = None # os.environ["NICO_USER"]
+    nico_password = None # os.environ["NICO_PASSWORD"]
+    nico_channel = sys.argv[1] # os.environ["NICO_CHANNEL"]
+    mode = sys.argv[2]
 
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
@@ -519,13 +573,13 @@ def main():
 
         purchase_type = link["purchase_type"]
 
-        # if purchase_type != "":
-        #     sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
-        #     continue
-
-        if not link["purchase_type"] in ['free_for_member', 'member_unlimited_access']:
+        if purchase_type != "":
             sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
             continue
+
+        # if not link["purchase_type"] in ['', 'free_for_member', 'member_unlimited_access']:
+        #     sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
+        #     continue
 
         glob_result = glob.glob("%s/%s_*_*.mp4" % (outdir, watch_id))
         if glob_result:
@@ -544,33 +598,48 @@ def main():
                 sys.stderr.write("[info] init_driver\n")
                 driver = init_driver()
 
-                sys.stderr.write("[info] nico_login\n")
-                nico_login(driver, nico_user, nico_password)
+                if nico_user:
+                    sys.stderr.write("[info] nico_login\n")
+                    nico_login(driver, nico_user, nico_password)
 
-                sys.stderr.write("[info] opening %s\n" % watch_id)
-                driver.get(link["href"])
+                fail_count = 0
+                while True:
+                    try:
 
-                sys.stderr.write("[info] get_download_url %s\n" % watch_id)
-                url_info = get_download_url(driver, mode)
-                sys.stderr.write("[info] url=%s\n" % url_info)
-                format_id = url_info["format_id"]
+                        if mode=="best":
+                            if sleep_duration_noneco()[0]>0:
+                                raise Exception("eco time")
 
-                user_agent = driver.execute_script("return navigator.userAgent;")
-                save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
+                        sys.stderr.write("[info] opening %s\n" % watch_id)
+                        driver.get(link["href"])
 
-                if url_info["is_hls"]:
-                    sys.stderr.write("[info] download_hls\n")
-                    download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"], link["upload_date"])
-                else:
-                    cookie = get_nico_cookie(driver.get_cookies())
-                    sys.stderr.write("[info] download_http\n")
-                    download_http(url_info["url"], save_path, cookie,user_agent, link["href"])
+                        sys.stderr.write("[info] get_download_url %s\n" % watch_id)
+                        url_info = get_download_url(driver, mode)
+                        sys.stderr.write("[info] info: %s\n" % str_abbreviate(repr(url_info)))
+                        format_id = url_info["format_id"]
 
-                sys.stderr.write("[info] quiting driver\n")
-                driver.close()
-                driver.quit()
+                        pause_video(driver)
 
-                break
+                        user_agent = driver.execute_script("return navigator.userAgent;")
+                        save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
+
+                        if url_info["is_hls"]:
+                            # sys.stderr.write("[debug] url_info=%s\n" % repr(url_info))
+                            sys.stderr.write("[info] download_hls\n")
+                            download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"], link["upload_date"], url_info["description"])
+                            break
+                        else:
+                            cookie = get_nico_cookie(driver.get_cookies())
+                            sys.stderr.write("[info] download_http\n")
+                            download_http(url_info["url"], save_path, cookie,user_agent, link["href"])
+                            break
+                    except KeyboardInterrupt as e:
+                        raise e
+                    except Exception as e:
+                        if fail_count > 3:
+                            raise e
+                        sys.stderr.write(traceback.format_exc())
+                        fail_count += 1
 
             except KeyboardInterrupt as e:
                 raise e
@@ -587,7 +656,15 @@ def main():
                 time.sleep(sleep_time)
 
                 sleep_time *= 2
+                if sleep_time > 60*10:
+                    sleep_time = 60*10
                 continue
+
+            else:
+                sys.stderr.write("[info] quiting driver\n")
+                driver.close()
+                driver.quit()
+                break
 
 
     # driver.close()
