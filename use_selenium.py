@@ -135,6 +135,9 @@ def system_message(driver):
 
     return driver.find_element_by_css_selector("#js-app > div > div.WatchAppContainer-main > div.MainContainer > div.MainContainer-player > div.PlayerContainer > div.InView.VideoContainer > div.SystemMessageContainer > div > div").text
 
+def get_videotitle(driver):
+    return driver.find_element_by_css_selector(".VideoTitle").text
+
 def get_duration(driver):
     return driver.find_element_by_css_selector(".PlayerPlayTime-duration").text
 
@@ -176,7 +179,7 @@ def init_driver():
     return driver
 
 curl_path = "curl.exe" # os.environ["CURL"]
-def download_http(url, outfn, cookie, user_agent, http_referer):
+def download_http(url, outfn, cookie, user_agent, http_referer, upload_date):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     curl_cmd = [ curl_path,
         "-A", user_agent,
@@ -199,6 +202,9 @@ def download_http(url, outfn, cookie, user_agent, http_referer):
 
     time.sleep(5)
     shutil.move(tmpfn, outfn)
+    upload_dt = datetime.datetime.strptime(upload_date, "%Y-%m-%d %H:%M")
+    upload_ts = upload_dt.timestamp()
+    os.utime(outfn, (upload_ts, upload_ts))
 
 
 ffmpeg_path = "ffmpeg.exe" # os.environ["FFMPEG"]
@@ -211,7 +217,7 @@ bitrate_pat = re.compile(b"bitrate=\\s*(.+?) ")
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
-def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date, description):
+def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer, upload_date, description):
     tmpfn = "tmp_%s.mp4" % os.getpid()
     # "-f", "mpegts"
     ffmpeg_cmd = [ ffmpeg_path,
@@ -221,90 +227,101 @@ def download_hls(url, outfn, duration_sec, user_agent, http_referer, upload_date
         "-y", "-hide_banner", "-loglevel", "level+info",
         "-i", url, "-c:v", "copy", "-c:a", "copy",
         "-movflags", "faststart", "-bsf:a", "aac_adtstoasc",
+        "-metadata", "title=%s" % videotitle,
         "-metadata", "creation_time=%s:00" % upload_date,
         "-metadata", "comment=%s" % description,
         tmpfn
     ]
-    count = 0
-    while True:
-        proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+    upload_dt = datetime.datetime.strptime(upload_date, "%Y-%m-%d %H:%M")
+    upload_ts = upload_dt.timestamp()
 
-        need_linebreak = False
-        
-        duration_minsec = divmod(duration_sec, 60)
-        # mes_len_prev = 0
+    try:
+        count = 0
         while True:
-            line = proc.stderr.readline()
-            if not line:
-                break
-            # line = line_raw.decode().rstrip("\r\n")
-            line = line.rstrip(b"\r\n")
-            for l in line.split(b"\r"):
-                # sys.stderr.write("[info] %s\n"%repr(l))
-                if info_pat.search(l):
-                    if info_pat.match(l):
-                        if frame_pat.match(l):
-                            # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
-                            time_match = time_pat.search(l)
-                            playtime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
-                            playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
+            proc = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
-                            speed_match = speed_pat.search(l)
-                            speed_str = speed_match.group(1).decode()
-                            speed = float(speed_str)
-                            if speed == 0:
-                                speed = 1e-5
-
-                            size_match = size_pat.search(l)
-                            size = size_match.group(1).decode()
-
-                            bitrate_match = bitrate_pat.search(l)
-                            bitrate_str = bitrate_match.group(1).decode()
-
-                            remtime_sec = (duration_sec-playtime_sec)/speed
-                            remtime_minsec = divmod(int(remtime_sec), 60)
-
-                            mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playtime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
-
-                            # mes_len = len(mes)
-
-                            # pad_len = mes_len_prev - mes_len
-                            # mes_len_prev = mes_len
-
-                            sys.stderr.write(mes + "\033[0K\r")
-                            # if pad_len > 0:
-                            #     sys.stderr.write(" "*pad_len)
-                            # sys.stderr.write("\r")
-                            
-                            need_linebreak = True
-                        else: # not progress info
-                            if need_linebreak:
-                                sys.stderr.write("\n")
-                                need_linebreak = False
-                            sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
-                    else:
-                        continue
-                else:
-                    if need_linebreak:
-                        sys.stderr.write("\n")
-                        need_linebreak = False
-                    sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
-        if need_linebreak:
-            sys.stderr.write("\n")
             need_linebreak = False
-        proc.wait()
-        if proc.returncode != 0:
-            if count < 3:
-                sys.stderr.write("\n[warn] ffmpeg exited with code %d (0x%X). retrying\n" % (proc.returncode, proc.returncode))
-                time.sleep(10)
-                count += 1
-                continue
-            else:
-                raise Exception("ffmpeg exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
-        break
+            
+            duration_minsec = divmod(duration_sec, 60)
+            # mes_len_prev = 0
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                # line = line_raw.decode().rstrip("\r\n")
+                line = line.rstrip(b"\r\n")
+                for l in line.split(b"\r"):
+                    # sys.stderr.write("[info] %s\n"%repr(l))
+                    if info_pat.search(l):
+                        if info_pat.match(l):
+                            if frame_pat.match(l):
+                                # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
+                                time_match = time_pat.search(l)
+                                playtime_minsec = [int(time_match.group(1))*60+int(time_match.group(2)), float(time_match.group(3)) ]
+                                playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
 
-    time.sleep(5)
-    shutil.move(tmpfn, outfn)
+                                speed_match = speed_pat.search(l)
+                                speed_str = speed_match.group(1).decode()
+                                speed = float(speed_str)
+                                if speed == 0:
+                                    speed = 1e-5
+
+                                size_match = size_pat.search(l)
+                                size = size_match.group(1).decode()
+
+                                bitrate_match = bitrate_pat.search(l)
+                                bitrate_str = bitrate_match.group(1).decode()
+
+                                remtime_sec = (duration_sec-playtime_sec)/speed
+                                remtime_minsec = divmod(int(remtime_sec), 60)
+
+                                mes = "[ffmpeg] " + " ".join(["progress=%0.1f%%"%((100*playtime_sec)/duration_sec), "time=%02d:%02.0f/%02d:%02d"%(*playtime_minsec,*duration_minsec), "size=%s"%size, "bitrate=%s"%bitrate_str, "speed=%sx"%speed_str, "remtime=%02d:%02d" % remtime_minsec])
+
+                                # mes_len = len(mes)
+
+                                # pad_len = mes_len_prev - mes_len
+                                # mes_len_prev = mes_len
+
+                                sys.stderr.write(mes + "\033[0K\r")
+                                # if pad_len > 0:
+                                #     sys.stderr.write(" "*pad_len)
+                                # sys.stderr.write("\r")
+                                
+                                need_linebreak = True
+                            else: # not progress info
+                                if need_linebreak:
+                                    sys.stderr.write("\n")
+                                    need_linebreak = False
+                                sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
+                        else:
+                            continue
+                    else:
+                        if need_linebreak:
+                            sys.stderr.write("\n")
+                            need_linebreak = False
+                        sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
+            if need_linebreak:
+                sys.stderr.write("\n")
+                need_linebreak = False
+            proc.wait()
+            if proc.returncode != 0:
+                if count < 3:
+                    sys.stderr.write("\n[warn] ffmpeg exited with code %d (0x%X). retrying\n" % (proc.returncode, proc.returncode))
+                    time.sleep(10)
+                    count += 1
+                    continue
+                else:
+                    raise Exception("ffmpeg exited with code %d (0x%X)\ncmd:%s" % (proc.returncode, proc.returncode, ffmpeg_cmd))
+            break
+
+        time.sleep(5)
+        shutil.move(tmpfn, outfn)
+        os.utime(outfn, (upload_ts, upload_ts))
+
+    except (Exception, KeyboardInterrupt) as e:
+        os.remove(tmpfn)
+        raise e
+
 
 
 res_pat=re.compile("(\\d+)p")
@@ -316,6 +333,9 @@ def get_download_url(driver, mode):
     # pause_video(driver)
 
     sleep_time = 5
+
+    sys.stderr.write("[info] get_videotitle for sanity check\n")
+    get_videotitle(driver)
 
     sys.stderr.write("[info] get_description\n")
     description_text = get_description(driver)
@@ -465,7 +485,7 @@ url_pat = re.compile('https://www.nicovideo.jp/watch/(.+)')
 def nicoch_get_page(sess, chname, pagenum):
     path = 'https://ch.nicovideo.jp/%s/video' % chname
     # links = []
-    waiting_time = 10
+    waiting_time = 60
     while True:
         try:
             result = sess.get(path, params={'page': pagenum, 'sort': 'f', 'order': 'd'})
@@ -477,6 +497,7 @@ def nicoch_get_page(sess, chname, pagenum):
             #  n: comment ga atarasii
             #  l: saisei jikan
             # order 'a'scending or 'd'escending
+            result.raise_for_status()
             break
         except Exception as e:
             sys.stderr.write("[Exception] %s\n"%(e))
@@ -626,20 +647,20 @@ def main():
                         if url_info["is_hls"]:
                             # sys.stderr.write("[debug] url_info=%s\n" % repr(url_info))
                             sys.stderr.write("[info] download_hls\n")
-                            download_hls(url_info["url"], save_path, url_info["duration"], user_agent, link["href"], link["upload_date"], url_info["description"])
+                            download_hls(url_info["url"], save_path, link["title"], url_info["duration"], user_agent, link["href"], link["upload_date"], url_info["description"])
                             break
                         else:
                             cookie = get_nico_cookie(driver.get_cookies())
                             sys.stderr.write("[info] download_http\n")
-                            download_http(url_info["url"], save_path, cookie,user_agent, link["href"])
+                            download_http(url_info["url"], save_path, cookie,user_agent, link["href"], link["upload_date"])
                             break
                     except KeyboardInterrupt as e:
                         raise e
                     except Exception as e:
+                        fail_count += 1
                         if fail_count > 3:
                             raise e
                         sys.stderr.write(traceback.format_exc())
-                        fail_count += 1
 
             except KeyboardInterrupt as e:
                 raise e
