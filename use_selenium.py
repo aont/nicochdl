@@ -178,9 +178,10 @@ def init_driver():
     driver.set_window_position(*winpos)
     return driver
 
+tmpdir = "tmp"
 curl_path = "curl.exe" # os.environ["CURL"]
 def download_http(url, outfn, cookie, user_agent, http_referer, upload_date):
-    tmpfn = "tmp_%s.mp4" % os.getpid()
+    tmpfn = os.path.join(tmpdir, "tmp_%s.mp4" % os.getpid())
     curl_cmd = [ curl_path,
         "-A", user_agent,
         "-H", 'Origin: https://www.nicovideo.jp',
@@ -218,7 +219,7 @@ bitrate_pat = re.compile(b"bitrate=\\s*(.+?) ")
 # hls_pat = re.compile("\\[hls ")
 
 def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer, upload_date, description):
-    tmpfn = "tmp_%s.mp4" % os.getpid()
+    tmpfn = os.path.join(tmpdir, "tmp_%s.mp4" % os.getpid())
     # "-f", "mpegts"
     ffmpeg_cmd = [ ffmpeg_path,
         "-user_agent", user_agent,
@@ -319,7 +320,9 @@ def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer,
         os.utime(outfn, (upload_ts, upload_ts))
 
     except (Exception, KeyboardInterrupt) as e:
-        os.remove(tmpfn)
+        if os.path.isfile(tmpfn):
+            time.sleep(5)
+            os.remove(tmpfn)
         raise e
 
 
@@ -588,6 +591,8 @@ def main():
 
     outdir = mode
 
+    os.makedirs(tmpdir, exist_ok=True)
+
     for link in nicoch_get(nico_channel):
 
         watch_id = link["watch_id"]
@@ -615,6 +620,7 @@ def main():
                     wait_noneco()
                 if mode=="low":
                     wait_eco()
+                    # pass
 
                 sys.stderr.write("[info] init_driver\n")
                 driver = init_driver()
