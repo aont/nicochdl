@@ -19,6 +19,7 @@ import selenium
 import selenium.webdriver.firefox.options
 import selenium.webdriver
 
+sys.dont_write_bytecode = True
 
 def get_screensize():
     import ctypes
@@ -262,10 +263,15 @@ def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer,
                                 playtime_sec = playtime_minsec[0]*60+playtime_minsec[1]
 
                                 speed_match = speed_pat.search(l)
-                                speed_str = speed_match.group(1).decode()
-                                speed = float(speed_str)
-                                if speed == 0:
+                                if speed_match:
+                                    speed_str = speed_match.group(1).decode()
+                                    speed = float(speed_str)
+                                    if speed == 0:
+                                        speed = 1e-5
+                                else:
+                                    speed_str = "N/A"
                                     speed = 1e-5
+                                    sys.stderr.buffer.write(b"[warn] speed invalid: %s\n" % l)
 
                                 size_match = size_pat.search(l)
                                 size = size_match.group(1).decode()
@@ -319,9 +325,15 @@ def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer,
         shutil.move(tmpfn, outfn)
         os.utime(outfn, (upload_ts, upload_ts))
 
-    except (Exception, KeyboardInterrupt) as e:
+    except Exception as e:
+        proc.kill()
+        time.sleep(5)
         if os.path.isfile(tmpfn):
-            time.sleep(5)
+            os.remove(tmpfn)
+        raise e
+    except KeyboardInterrupt as e:
+        time.sleep(5)
+        if os.path.isfile(tmpfn):
             os.remove(tmpfn)
         raise e
 
@@ -336,6 +348,10 @@ def get_download_url(driver, mode):
     # pause_video(driver)
 
     sleep_time = 5
+
+    sys.stderr.write("[info] check_need_login for sanity check\n")
+    if check_need_login(driver):
+        raise Exception("need login")
 
     sys.stderr.write("[info] get_videotitle for sanity check\n")
     get_videotitle(driver)
@@ -579,12 +595,15 @@ def nicoch_get(chname):
             break
         page += 1
 
+import myconfig
+soid_pat = re.compile('so(\\d+)')
+
 def main():
 
-    nico_user = None # os.environ["NICO_USER"]
-    nico_password = None # os.environ["NICO_PASSWORD"]
-    nico_channel = sys.argv[1] # os.environ["NICO_CHANNEL"]
-    mode = sys.argv[2]
+    nico_user = myconfig.nico_user # os.environ["NICO_USER"]
+    nico_password = myconfig.nico_password # os.environ["NICO_PASSWORD"]
+    nico_channel = myconfig.nico_channel # sys.argv[1] # os.environ["NICO_CHANNEL"]
+    mode = myconfig.nico_mode # sys.argv[2]
 
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
@@ -593,19 +612,33 @@ def main():
 
     os.makedirs(tmpdir, exist_ok=True)
 
+    # parallel config
+    # num_procs = int(sys.argv[2])
+    # proc_id = int(sys.argv[1])
+    # if proc_id >= num_procs:
+    #     raise Exception("proc_id >= num_procs: %s %s" % (proc_id, num_procs))
+
     for link in nicoch_get(nico_channel):
 
         watch_id = link["watch_id"]
 
+        # soid_match = soid_pat.match(watch_id)
+        # if not soid_match:
+        #     raise Exception("soid not found: %s" % watch_id)
+        # soid_num = int(soid_match.group(1))
+        # if proc_id != (soid_num % num_procs):
+        #     sys.stderr.write("[info] skipping %s since it is another proccesse's scope\n" % watch_id)
+        #     continue
+
         purchase_type = link["purchase_type"]
 
-        if purchase_type != "":
-            sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
-            continue
-
-        # if not link["purchase_type"] in ['', 'free_for_member', 'member_unlimited_access']:
+        # if purchase_type != "":
         #     sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
         #     continue
+
+        if not link["purchase_type"] in ['free_for_member', 'member_unlimited_access']:
+            sys.stderr.write("[info] skipping %s since purchase_type=%s\n" % (watch_id, purchase_type))
+            continue
 
         glob_result = glob.glob("%s/%s_*_*.mp4" % (outdir, watch_id))
         if glob_result:
