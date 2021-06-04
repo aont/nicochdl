@@ -19,6 +19,9 @@ import selenium
 import selenium.webdriver.firefox.options
 import selenium.webdriver
 
+import fasteners
+import psutil
+
 sys.dont_write_bytecode = True
 
 def get_screensize():
@@ -65,7 +68,7 @@ def nico_login(driver, mailtel, password):
     login_button = driver.find_element_by_id("login__submit")
     login_button.click()
 
-def save_cookie(cookie_json_fn):
+def save_cookie(driver, cookie_json_fn):
     sys.stderr.write("[info] saveing cookies\n")
     fp = open(cookie_json_fn, "w")
     json.dump(driver.get_cookies() , fp)
@@ -179,9 +182,9 @@ def init_driver():
     driver.set_window_position(*winpos)
     return driver
 
-tmpdir = "tmp"
+# tmpdir = "tmp"
 curl_path = "curl.exe" # os.environ["CURL"]
-def download_http(url, outfn, cookie, user_agent, http_referer, upload_date):
+def download_http(url, outfn, tmpdir, cookie, user_agent, http_referer, upload_date):
     tmpfn = os.path.join(tmpdir, "tmp_%s.mp4" % os.getpid())
     curl_cmd = [ curl_path,
         "-A", user_agent,
@@ -215,11 +218,12 @@ frame_pat = re.compile(b"\\[info\\] frame")
 time_pat = re.compile(b"time=(.*?):(.*?):(.*?) ")
 speed_pat = re.compile(b"speed=\\s*(.*?)x")
 size_pat = re.compile(b"size=\\s*(.*?)\\s")
-bitrate_pat = re.compile(b"bitrate=\\s*(.+?) ") 
+bitrate_pat = re.compile(b"bitrate=\\s*(.+?) ")
+error_pat = re.compile(b"\\[error\\]")
 # http_pat = re.compile("\\[http ")
 # hls_pat = re.compile("\\[hls ")
 
-def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer, upload_date, description):
+def download_hls(url, outfn, tmpdir, videotitle, duration_sec, user_agent, http_referer, upload_date, description):
     tmpfn = os.path.join(tmpdir, "tmp_%s.mp4" % os.getpid())
     # "-f", "mpegts"
     ffmpeg_cmd = [ ffmpeg_path,
@@ -254,7 +258,13 @@ def download_hls(url, outfn, videotitle, duration_sec, user_agent, http_referer,
                 line = line.rstrip(b"\r\n")
                 for l in line.split(b"\r"):
                     # sys.stderr.write("[info] %s\n"%repr(l))
-                    if info_pat.search(l):
+                    if error_pat.search(l):
+                        if need_linebreak:
+                            sys.stderr.write("\n")
+                            need_linebreak = False
+                        sys.stderr.buffer.write(b"[ffmpeg] " + l + b"\n")
+                        proc.kill()
+                    elif info_pat.search(l):
                         if info_pat.match(l):
                             if frame_pat.match(l):
                                 # "frame=18660 fps=257 q=-1.0 Lsize=   38484kB time=00:10:22.01 bitrate= 506.8kbits/s speed=8.58x"
@@ -598,18 +608,71 @@ def nicoch_get(chname):
 import myconfig
 soid_pat = re.compile('so(\\d+)')
 
+class DoOnExit:
+    def __init__(self, func, argv=()):
+        self.func = func
+        self.argv = argv
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.func(*self.argv)
+
+def inprogress_confirm(lockfilepath, inprogressjsonpath, watch_id):
+    with fasteners.InterProcessLock(lockfilepath):
+        if os.path.exists(inprogressjsonpath):
+            with open(inprogressjsonpath, "rt") as f:
+                inprogress_ary = json.load(f)
+        else:
+            inprogress_ary = []
+
+        for inprogress in inprogress_ary:
+            inprogress_watch_id = inprogress["watch_id"]
+            inprogress_pid = inprogress["pid"]
+            if watch_id == inprogress_watch_id:
+                if psutil.pid_exists(inprogress_pid):
+                    return True, inprogress_ary
+
+        inprogress_ary.append({
+            "pid": os.getpid(),
+            "watch_id": watch_id
+        })
+
+        with open(inprogressjsonpath, "wt") as f:
+            json.dump(inprogress_ary, f)
+        
+        return False, inprogress_ary
+
+def inprogress_clear(lockfilepath, inprogressjsonpath, inprogress_ary):
+    with fasteners.InterProcessLock(lockfilepath):
+        if os.path.exists(inprogressjsonpath):
+            with open(inprogressjsonpath, "rt") as f:
+                inprogress_ary = json.load(f)
+        else:
+            inprogress_ary = []
+
+        for index in reversed(range(len(inprogress_ary))):
+            inprogress = inprogress_ary[index]
+            # inprogress_watch_id = inprogress["watch_id"]
+            inprogress_pid = inprogress["pid"]
+            if os.getpid() == inprogress_pid:
+                del inprogress_ary[index]
+        
+        with open(inprogressjsonpath, "wt") as f:
+            json.dump(inprogress_ary, f)
+
 def main():
 
     nico_user = myconfig.nico_user # os.environ["NICO_USER"]
     nico_password = myconfig.nico_password # os.environ["NICO_PASSWORD"]
     nico_channel = myconfig.nico_channel # sys.argv[1] # os.environ["NICO_CHANNEL"]
     mode = myconfig.nico_mode # sys.argv[2]
+    basedir = myconfig.basedir
 
     if mode not in ["best", "low"]:
         raise Exception("unexpected mode %s" % mode)
 
-    outdir = mode
-
+    outdir = os.path.join(basedir, mode)
+    tmpdir = os.path.join(basedir, "tmp")
     os.makedirs(tmpdir, exist_ok=True)
 
     # parallel config
@@ -617,6 +680,8 @@ def main():
     # proc_id = int(sys.argv[1])
     # if proc_id >= num_procs:
     #     raise Exception("proc_id >= num_procs: %s %s" % (proc_id, num_procs))
+    lockfilepath = os.path.join(tmpdir, ".lockfile")
+    inprogressjsonpath = os.path.join(tmpdir, "inprogress.json")
 
     for link in nicoch_get(nico_channel):
 
@@ -645,86 +710,135 @@ def main():
             sys.stderr.write("[info] skipping %s since it is downloaded before\n" % watch_id)
             continue
 
-        sleep_time = 60
-        while True:
-            try:
+        # with fasteners.InterProcessLock(lockfilepath):
+        #     if os.path.exists(inprogressjsonpath):
+        #         with open(inprogressjsonpath, "rt") as f:
+        #             inprogress_ary = json.load(f)
+        #     else:
+        #         inprogress_ary = []
 
-                if mode=="best":
-                    wait_noneco()
-                if mode=="low":
-                    wait_eco()
-                    # pass
+        #     is_in_progress = False
+        #     for inprogress in inprogress_ary:
+        #         inprogress_watch_id = inprogress["watch_id"]
+        #         inprogress_pid = inprogress["pid"]
+        #         if watch_id == inprogress_watch_id:
+        #             if psutil.pid_exists(inprogress_pid):                    
+        #                 is_in_progress = True
 
-                sys.stderr.write("[info] init_driver\n")
-                driver = init_driver()
+        #     if is_in_progress:
+        #         sys.stderr.write("[info] skipping %s since another process is downloading\n" % watch_id)
+        #         continue
 
-                if nico_user:
-                    sys.stderr.write("[info] nico_login\n")
-                    nico_login(driver, nico_user, nico_password)
+        #     inprogress_ary.append({
+        #         "pid": os.getpid(),
+        #         "watch_id": watch_id
+        #     })
 
-                fail_count = 0
-                while True:
-                    try:
+        #     with open(inprogressjsonpath, "wt") as f:
+        #         json.dump(inprogress_ary, f)
+        is_in_progress, inprogress_ary = inprogress_confirm(lockfilepath, inprogressjsonpath, watch_id)
+        if is_in_progress:
+            sys.stderr.write("[info] skipping %s since another process is downloading\n" % watch_id)
+            continue
 
-                        if mode=="best":
-                            if sleep_duration_noneco()[0]>0:
-                                raise Exception("eco time")
+        with DoOnExit(inprogress_clear, (lockfilepath, inprogressjsonpath, inprogress_ary)):
+            sleep_time = 60
+            while True:
+                try:
 
-                        sys.stderr.write("[info] opening %s\n" % watch_id)
-                        driver.get(link["href"])
+                    if mode=="best":
+                        wait_noneco()
+                    if mode=="low":
+                        wait_eco()
+                        # pass
 
-                        sys.stderr.write("[info] get_download_url %s\n" % watch_id)
-                        url_info = get_download_url(driver, mode)
-                        sys.stderr.write("[info] info: %s\n" % str_abbreviate(repr(url_info)))
-                        format_id = url_info["format_id"]
+                    sys.stderr.write("[info] init_driver\n")
+                    driver = init_driver()
 
-                        pause_video(driver)
+                    if nico_user:
+                        sys.stderr.write("[info] nico_login\n")
+                        nico_login(driver, nico_user, nico_password)
 
-                        user_agent = driver.execute_script("return navigator.userAgent;")
-                        save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
+                    fail_count = 0
+                    while True:
+                        try:
 
-                        if url_info["is_hls"]:
-                            # sys.stderr.write("[debug] url_info=%s\n" % repr(url_info))
-                            sys.stderr.write("[info] download_hls\n")
-                            download_hls(url_info["url"], save_path, link["title"], url_info["duration"], user_agent, link["href"], link["upload_date"], url_info["description"])
-                            break
-                        else:
-                            cookie = get_nico_cookie(driver.get_cookies())
-                            sys.stderr.write("[info] download_http\n")
-                            download_http(url_info["url"], save_path, cookie,user_agent, link["href"], link["upload_date"])
-                            break
-                    except KeyboardInterrupt as e:
-                        raise e
-                    except Exception as e:
-                        fail_count += 1
-                        if fail_count > 3:
+                            if mode=="best":
+                                if sleep_duration_noneco()[0]>0:
+                                    raise Exception("eco time")
+
+                            sys.stderr.write("[info] opening %s\n" % watch_id)
+                            driver.get(link["href"])
+
+                            sys.stderr.write("[info] get_download_url %s\n" % watch_id)
+                            url_info = get_download_url(driver, mode)
+                            sys.stderr.write("[info] info: %s\n" % str_abbreviate(repr(url_info)))
+                            format_id = url_info["format_id"]
+
+                            pause_video(driver)
+
+                            user_agent = driver.execute_script("return navigator.userAgent;")
+                            save_path = os.path.join(outdir, "%s_%s_%s.mp4" % (watch_id, valid_fn(link["title"]), format_id))
+
+                            if url_info["is_hls"]:
+                                # sys.stderr.write("[debug] url_info=%s\n" % repr(url_info))
+                                sys.stderr.write("[info] download_hls\n")
+                                download_hls(url_info["url"], save_path, tmpdir, link["title"], url_info["duration"], user_agent, link["href"], link["upload_date"], url_info["description"])
+                                break
+                            else:
+                                cookie = get_nico_cookie(driver.get_cookies())
+                                sys.stderr.write("[info] download_http\n")
+                                download_http(url_info["url"], save_path, tmpdir, cookie,user_agent, link["href"], link["upload_date"])
+                                break
+                        except KeyboardInterrupt as e:
                             raise e
-                        sys.stderr.write(traceback.format_exc())
+                        except Exception as e:
+                            fail_count += 1
+                            if fail_count > 3:
+                                raise e
+                            sys.stderr.write(traceback.format_exc())
 
-            except KeyboardInterrupt as e:
-                raise e
-            except Exception as e:
-                exc_tb = traceback.format_exc()
-                sys.stderr.write("[Exception]\n")
-                sys.stderr.write(exc_tb)
+                except KeyboardInterrupt as e:
+                    raise e
+                except Exception as e:
+                    exc_tb = traceback.format_exc()
+                    sys.stderr.write("[Exception]\n")
+                    sys.stderr.write(exc_tb)
 
-                sys.stderr.write("[info] quiting driver\n")
-                driver.close()
-                driver.quit()
+                    sys.stderr.write("[info] quiting driver\n")
+                    driver.close()
+                    driver.quit()
 
-                sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
-                time.sleep(sleep_time)
+                    sys.stderr.write("[info] retry after %ss sleep\n" % sleep_time)
+                    time.sleep(sleep_time)
 
-                sleep_time *= 2
-                if sleep_time > 60*10:
-                    sleep_time = 60*10
-                continue
+                    sleep_time *= 2
+                    if sleep_time > 60*10:
+                        sleep_time = 60*10
+                    continue
 
-            else:
-                sys.stderr.write("[info] quiting driver\n")
-                driver.close()
-                driver.quit()
-                break
+                else:
+                    sys.stderr.write("[info] quiting driver\n")
+                    driver.close()
+                    driver.quit()
+                    break
+        
+        # with fasteners.InterProcessLock(lockfilepath):
+        #     if os.path.exists(inprogressjsonpath):
+        #         with open(inprogressjsonpath, "rt") as f:
+        #             inprogress_ary = json.load(f)
+        #     else:
+        #         inprogress_ary = []
+
+        #     for index in reversed(range(len(inprogress_ary))):
+        #         inprogress = inprogress_ary[index]
+        #         # inprogress_watch_id = inprogress["watch_id"]
+        #         inprogress_pid = inprogress["pid"]
+        #         if os.getpid() == inprogress_pid:
+        #             del inprogress_ary[index]
+            
+        #     with open(inprogressjsonpath, "wt") as f:
+        #         json.dump(inprogress_ary, f)
 
 
     # driver.close()
